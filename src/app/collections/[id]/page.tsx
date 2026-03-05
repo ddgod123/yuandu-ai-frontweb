@@ -91,6 +91,15 @@ function buildCollectionZipName(title?: string | null, collectionId?: number) {
   return `${base}.zip`;
 }
 
+async function parseApiErrorCode(res: Response) {
+  try {
+    const payload = (await res.json()) as { error?: string };
+    return (payload?.error || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 function buildImageCandidates(rawUrl: string): string[] {
   const trimmed = rawUrl.trim();
   if (!trimmed) return [];
@@ -371,7 +380,14 @@ export default function CollectionDetailPage() {
         return;
       }
       if (res.status === 403) {
-        setNotice("暂无下载权限");
+        const errorCode = await parseApiErrorCode(res);
+        if (errorCode === "subscription_required") {
+          setNotice("下载合集需要订阅权限，请到个人中心使用兑换码开通");
+        } else if (errorCode === "user_disabled") {
+          setNotice("账号状态异常，暂时无法下载");
+        } else {
+          setNotice("暂无下载权限");
+        }
         return;
       }
       if (!res.ok) {
@@ -405,7 +421,14 @@ export default function CollectionDetailPage() {
         return;
       }
       if (res.status === 403) {
-        setNotice("暂无下载权限");
+        const errorCode = await parseApiErrorCode(res);
+        if (errorCode === "subscription_required") {
+          setNotice("下载合集需要订阅权限，请到个人中心使用兑换码开通");
+        } else if (errorCode === "user_disabled") {
+          setNotice("账号状态异常，暂时无法下载");
+        } else {
+          setNotice("暂无下载权限");
+        }
         return;
       }
       if (!res.ok) {
@@ -447,7 +470,12 @@ export default function CollectionDetailPage() {
         return;
       }
       if (res.status === 403) {
-        setNotice("暂无下载权限");
+        const errorCode = await parseApiErrorCode(res);
+        if (errorCode === "user_disabled") {
+          setNotice("账号状态异常，暂时无法下载");
+        } else {
+          setNotice("暂无下载权限");
+        }
         return;
       }
       if (!res.ok) {

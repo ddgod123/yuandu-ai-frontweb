@@ -1,31 +1,209 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type FooterSetting = {
+  siteName: string;
+  siteDescription: string;
+  contactEmail: string;
+  complaintEmail: string;
+  icpNumber: string;
+  icpLink: string;
+  publicSecurityNumber: string;
+  publicSecurityLink: string;
+  copyrightText: string;
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
+
+const DEFAULT_SETTING: FooterSetting = {
+  siteName: "表情包档案馆",
+  siteDescription:
+    "致力于收集、整理和分享互联网表情包资源。本站提供合集浏览、下载与收藏功能，服务于个人非商业交流场景。",
+  contactEmail: "contact@emoji-archive.com",
+  complaintEmail: "contact@emoji-archive.com",
+  icpNumber: "ICP备案号：待补充",
+  icpLink: "",
+  publicSecurityNumber: "公安备案号：待补充",
+  publicSecurityLink: "",
+  copyrightText: "表情包档案馆. All rights reserved.",
+};
+
+function normalizeSetting(payload: Partial<FooterSetting> | null | undefined): FooterSetting {
+  return {
+    ...DEFAULT_SETTING,
+    ...(payload || {}),
+  };
+}
 
 export default function Footer() {
+  const [setting, setSetting] = useState<FooterSetting>(DEFAULT_SETTING);
+  const currentYear = new Date().getFullYear();
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadSetting = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/site-settings/footer`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as {
+          site_name?: string;
+          site_description?: string;
+          contact_email?: string;
+          complaint_email?: string;
+          icp_number?: string;
+          icp_link?: string;
+          public_security_number?: string;
+          public_security_link?: string;
+          copyright_text?: string;
+        };
+        if (controller.signal.aborted) return;
+        setSetting(
+          normalizeSetting({
+            siteName: data.site_name || "",
+            siteDescription: data.site_description || "",
+            contactEmail: data.contact_email || "",
+            complaintEmail: data.complaint_email || "",
+            icpNumber: data.icp_number || "",
+            icpLink: data.icp_link || "",
+            publicSecurityNumber: data.public_security_number || "",
+            publicSecurityLink: data.public_security_link || "",
+            copyrightText: data.copyright_text || "",
+          })
+        );
+      } catch {
+        // 保持默认配置兜底，避免接口失败导致底部不可用
+      }
+    };
+
+    loadSetting();
+
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
+  const contactEmail = setting.contactEmail.trim() || DEFAULT_SETTING.contactEmail;
+  const complaintEmail = setting.complaintEmail.trim() || contactEmail;
+  const icpNumber = setting.icpNumber.trim() || DEFAULT_SETTING.icpNumber;
+  const publicSecurityNumber =
+    setting.publicSecurityNumber.trim() || DEFAULT_SETTING.publicSecurityNumber;
+  const copyrightText = setting.copyrightText.trim() || DEFAULT_SETTING.copyrightText;
+
   return (
-    <footer className="border-t border-slate-100 bg-white py-12">
+    <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-6">
-        <div className="grid gap-12 md:grid-cols-3">
-          <div className="col-span-2">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm shadow-lg shadow-emerald-200">
-                <span className="filter grayscale brightness-200">🗂️</span>
+        <div className="grid gap-10 py-12 md:grid-cols-4">
+          <div className="md:col-span-2">
+            <Link href="/" className="inline-flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm text-white shadow-lg shadow-emerald-200/60">
+                <span>🗂️</span>
               </div>
-              <span className="text-lg font-black tracking-tight text-slate-900">表情包档案馆</span>
+              <span className="text-lg font-black tracking-tight text-slate-900">{setting.siteName}</span>
             </Link>
-            <p className="mt-4 max-w-sm text-sm font-medium leading-relaxed text-slate-500">
-              致力于收集、整理和分享互联网上那些让人忍俊不禁、心领神会的精彩表情。每一个表情都是一段情绪，每一份合集都是一种文化。
+            <p className="mt-4 max-w-xl text-sm leading-7 text-slate-600">{setting.siteDescription}</p>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              如有侵权、版权争议或合作需求，请联系：{" "}
+              <a href={`mailto:${contactEmail}`} className="font-semibold text-emerald-600 hover:text-emerald-500">
+                {contactEmail}
+              </a>
             </p>
           </div>
           <div>
-            <h4 className="text-sm font-black uppercase tracking-wider text-slate-900">资源</h4>
-            <ul className="mt-4 space-y-2 text-sm font-medium text-slate-500">
-              <li><Link href="/" className="hover:text-emerald-500 transition-colors">首页</Link></li>
-              <li><Link href="/categories" className="hover:text-emerald-500 transition-colors">分类</Link></li>
+            <h4 className="text-sm font-black tracking-wide text-slate-900">站点导航</h4>
+            <ul className="mt-4 space-y-2 text-sm text-slate-600">
+              <li>
+                <Link href="/" className="transition-colors hover:text-emerald-500">
+                  首页
+                </Link>
+              </li>
+              <li>
+                <Link href="/categories" className="transition-colors hover:text-emerald-500">
+                  表情包大全
+                </Link>
+              </li>
+              <li>
+                <Link href="/trending" className="transition-colors hover:text-emerald-500">
+                  表情包IP
+                </Link>
+              </li>
+              <li>
+                <Link href="/profile/favorites" className="transition-colors hover:text-emerald-500">
+                  我的收藏
+                </Link>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="text-sm font-black tracking-wide text-slate-900">服务与协议</h4>
+            <ul className="mt-4 space-y-2 text-sm text-slate-600">
+              <li>
+                <Link href="/join" className="transition-colors hover:text-emerald-500">
+                  申请加入
+                </Link>
+              </li>
+              <li>
+                <a href={`mailto:${complaintEmail}`} className="transition-colors hover:text-emerald-500">
+                  版权投诉
+                </a>
+              </li>
+              <li>
+                <Link href="/terms" className="transition-colors hover:text-emerald-500">
+                  用户协议
+                </Link>
+              </li>
+              <li>
+                <Link href="/privacy" className="transition-colors hover:text-emerald-500">
+                  隐私政策
+                </Link>
+              </li>
+              <li>
+                <Link href="/disclaimer" className="transition-colors hover:text-emerald-500">
+                  免责声明
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
-        <div className="mt-12 border-t border-slate-50 pt-8 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
-          © 2026 表情包档案馆 · Emoji Archive Project · Made with ❤️ for Internet Culture
+
+        <div className="border-t border-slate-100 py-6 text-xs leading-6 text-slate-500">
+          <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+            <p>
+              © {currentYear} {copyrightText}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {setting.icpLink ? (
+                <a
+                  href={setting.icpLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="transition-colors hover:text-emerald-500"
+                >
+                  {icpNumber}
+                </a>
+              ) : (
+                <span>{icpNumber}</span>
+              )}
+              {setting.publicSecurityLink ? (
+                <a
+                  href={setting.publicSecurityLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="transition-colors hover:text-emerald-500"
+                >
+                  {publicSecurityNumber}
+                </a>
+              ) : (
+                <span>{publicSecurityNumber}</span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </footer>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import CollectionPreviewGrid from "@/components/categories/CollectionPreviewGrid";
-import { Search, Filter, ChevronDown } from "lucide-react";
+import { Filter, ChevronDown } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 const PREVIEW_COUNT = 15;
@@ -166,7 +166,6 @@ export default function CategoriesPage() {
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [loadingCollections, setLoadingCollections] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedSortID, setSelectedSortID] = useState<string>(SORT_OPTIONS[0].id);
   const [selectedMediaType, setSelectedMediaType] = useState<MediaFilterOption["id"]>("all");
@@ -282,7 +281,7 @@ export default function CategoriesPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedTop, selectedChild, searchTerm, selectedSortID, selectedMediaType]);
+  }, [selectedTop, selectedChild, selectedSortID, selectedMediaType]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -310,9 +309,6 @@ export default function CategoriesPage() {
           }
         }
 
-        if (searchTerm.trim()) {
-          params.set("q", searchTerm.trim());
-        }
         params.set("sort", selectedSort.sort);
         params.set("order", selectedSort.order);
         if (selectedMediaType !== "all") {
@@ -371,13 +367,12 @@ export default function CategoriesPage() {
       }
     };
 
-    const timer = setTimeout(loadCollections, searchTerm.trim() ? 300 : 0);
+    loadCollections();
 
     return () => {
       controller.abort();
-      clearTimeout(timer);
     };
-  }, [selectedTop, selectedChild, selectedTopCategory, searchTerm, currentPage, selectedSort, selectedMediaType]);
+  }, [selectedTop, selectedChild, selectedTopCategory, currentPage, selectedSort, selectedMediaType]);
 
   const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 0;
   const paginationItems = useMemo(() => {
@@ -431,60 +426,44 @@ export default function CategoriesPage() {
     <div className="min-h-screen bg-white">
       <div className="sticky top-16 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-100">
         <div className="mx-auto max-w-7xl px-6 py-3">
-          <div className="flex flex-col md:flex-row items-center gap-3">
-            <div className="relative flex-1 group">
-              <Search
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-500 transition-colors"
-                size={18}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative">
+              <Filter
+                size={16}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
               />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="搜索感兴趣的合集..."
-                className="w-full h-10 pl-10 pr-4 rounded-lg bg-slate-100 border-2 border-transparent focus:bg-white focus:border-emerald-500/20 transition-all outline-none font-medium text-sm"
+              <select
+                value={selectedSortID}
+                onChange={(event) => setSelectedSortID(event.target.value)}
+                className="h-10 appearance-none rounded-lg border border-slate-200 bg-white pl-9 pr-9 text-sm font-bold text-slate-600 outline-none transition-colors hover:bg-slate-50 focus:border-emerald-300"
+                aria-label="合集排序"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={16}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
             </div>
-
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Filter
-                  size={16}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                />
-                <select
-                  value={selectedSortID}
-                  onChange={(event) => setSelectedSortID(event.target.value)}
-                  className="h-10 appearance-none rounded-lg border border-slate-200 bg-white pl-9 pr-9 text-sm font-bold text-slate-600 outline-none transition-colors hover:bg-slate-50 focus:border-emerald-300"
-                  aria-label="合集排序"
+            <div className="flex items-center rounded-lg border border-slate-200 bg-white p-1">
+              {MEDIA_FILTER_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setSelectedMediaType(option.id)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                    selectedMediaType === option.id
+                      ? "bg-emerald-500 text-white"
+                      : "text-slate-500 hover:bg-slate-50"
+                  }`}
                 >
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={16}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                />
-              </div>
-              <div className="flex items-center rounded-lg border border-slate-200 bg-white p-1">
-                {MEDIA_FILTER_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setSelectedMediaType(option.id)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
-                      selectedMediaType === option.id
-                        ? "bg-emerald-500 text-white"
-                        : "text-slate-500 hover:bg-slate-50"
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
 

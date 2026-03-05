@@ -7,6 +7,13 @@ type CollectionBrief = {
   id: number;
   title: string;
   cover_url?: string;
+  file_count?: number;
+  creator_name?: string;
+  creator_name_zh?: string;
+  creator_name_en?: string;
+  like_count?: number;
+  favorite_count?: number;
+  download_count?: number;
   created_at?: string;
 };
 
@@ -49,6 +56,26 @@ async function fetchLatestCollections(limit = 12): Promise<CollectionBrief[]> {
   }
 }
 
+async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
+  try {
+    const params = new URLSearchParams({
+      page: "1",
+      page_size: String(limit),
+      sort: "created_at",
+      order: "desc",
+      is_featured: "1",
+    });
+    const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: CollectionBrief[] };
+    return (data.items || []).slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 async function resolveCoverUrl(key?: string): Promise<string> {
   if (!key) return "";
   const trimmed = key.trim();
@@ -82,18 +109,26 @@ export default async function Page() {
       ? homeStats.total_emojis.toLocaleString()
       : "--";
   const latestCollections = await fetchLatestCollections(12);
+  const featuredCollections = await fetchFeaturedCollections(4);
   const latestWithCovers = await Promise.all(
     latestCollections.map(async (item) => ({
       ...item,
       cover: await resolveCoverUrl(item.cover_url),
     }))
   );
+  const featuredWithCovers = await Promise.all(
+    featuredCollections.map(async (item) => ({
+      ...item,
+      cover: await resolveCoverUrl(item.cover_url),
+      author: item.creator_name || item.creator_name_zh || item.creator_name_en || "官方推荐",
+    }))
+  );
   const fallbackCover = "https://api.dicebear.com/7.x/bottts/svg?seed=placeholder";
-  const trendingCollections = [
-    { title: "当代职场生存图鉴", author: "摸鱼专家", count: 42, color: "bg-blue-500", emoji: "💼" },
-    { title: "猫猫统治世界计划", author: "喵星大使", count: 128, color: "bg-rose-500", emoji: "🐱" },
-    { title: "大学期末现状", author: "挂科回避", count: 35, color: "bg-amber-500", emoji: "📚" },
-    { title: "微信万能表情包", author: "社交恐怖分子", count: 99, color: "bg-emerald-500", emoji: "✨" },
+  const featuredCardFallbacks = [
+    "from-cyan-100 via-sky-100 to-blue-100",
+    "from-amber-100 via-orange-100 to-rose-100",
+    "from-emerald-100 via-teal-100 to-cyan-100",
+    "from-violet-100 via-fuchsia-100 to-pink-100",
   ];
 
   return (
@@ -125,42 +160,62 @@ export default async function Page() {
         </div>
       </section>
 
-      {/* Trending Collections */}
+      {/* Featured Collections */}
       <section className="py-20">
         <div className="mx-auto max-w-7xl px-6">
           <div className="mb-12 flex items-end justify-between">
             <div>
-              <h2 className="text-3xl font-black tracking-tight text-slate-900">精选合集</h2>
-              <p className="mt-2 text-sm font-medium text-slate-500">馆长亲自挑选的优质合集，绝不踩雷。</p>
+              <h2 className="text-3xl font-black tracking-tight text-slate-900">推荐合集</h2>
+              <p className="mt-2 text-sm font-medium text-slate-500">来自后台勾选“推荐”的合集，首页固定展示最多 4 个。</p>
             </div>
             <Link href="/categories" className="text-sm font-bold text-emerald-600 hover:underline">查看全部</Link>
           </div>
 
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {trendingCollections.map((col) => (
-              <div
-                key={col.title} 
-                className="group relative h-64 overflow-hidden rounded-3xl bg-white p-8 shadow-sm transition-all hover:-translate-y-2 hover:shadow-2xl hover:shadow-slate-200/50"
-              >
-                <div className={`absolute right-0 top-0 h-32 w-32 -translate-y-8 translate-x-8 rounded-full ${col.color} opacity-10 transition-transform group-hover:scale-150`} />
-                <div className="relative flex h-full flex-col justify-between">
-                  <div>
-                    <div className="text-4xl">{col.emoji}</div>
-                    <h3 className="mt-4 text-xl font-bold leading-tight text-slate-900">{col.title}</h3>
-                    <p className="mt-1 text-xs font-bold text-slate-400">by {col.author}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-500 uppercase">
-                      {col.count} Emojis
+          {featuredWithCovers.length > 0 ? (
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {featuredWithCovers.map((item, index) => (
+                <Link
+                  href={`/collections/${item.id}`}
+                  key={item.id}
+                  className="group overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl"
+                >
+                  <div className="relative h-40 overflow-hidden">
+                    {item.cover ? (
+                      <div
+                        className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
+                        style={{ backgroundImage: `url("${item.cover}")` }}
+                      />
+                    ) : (
+                      <div
+                        className={`absolute inset-0 bg-gradient-to-br ${featuredCardFallbacks[index % featuredCardFallbacks.length]}`}
+                      />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/35 via-slate-900/5 to-transparent" />
+                    <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-black tracking-wide text-slate-800">
+                      推荐
                     </span>
-                    <div className="h-8 w-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                  </div>
+
+                  <div className="p-4">
+                    <h3 className="min-h-[3rem] overflow-hidden text-lg font-black leading-6 text-slate-900">
+                      {item.title}
+                    </h3>
+                    <p className="mt-1 text-xs font-bold text-slate-400">by {item.author}</p>
+                    <div className="mt-3 flex items-center justify-between text-xs font-bold text-slate-500">
+                      <span>{(item.file_count || 0).toLocaleString()} 张</span>
+                      <span>赞 {(item.like_count || 0).toLocaleString()}</span>
+                      <span>藏 {(item.favorite_count || 0).toLocaleString()}</span>
                     </div>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
+              <p className="text-sm font-semibold text-slate-500">当前还没有被标记为推荐的合集</p>
+              <p className="mt-1 text-xs font-medium text-slate-400">可在管理后台编辑合集时勾选“推荐”</p>
+            </div>
+          )}
         </div>
       </section>
 
@@ -197,9 +252,12 @@ export default async function Page() {
               分享你收藏已久的私藏表情包，让全世界看到你的幽默感。
             </p>
             <div className="relative mt-10 flex justify-center gap-4">
-              <button className="rounded-2xl bg-emerald-500 px-8 py-4 text-base font-bold text-white transition-all hover:bg-emerald-400 hover:scale-105 active:scale-95">
+              <Link
+                href="/join"
+                className="rounded-2xl bg-emerald-500 px-8 py-4 text-base font-bold text-white transition-all hover:bg-emerald-400 hover:scale-105 active:scale-95"
+              >
                 立即加入
-              </button>
+              </Link>
             </div>
           </div>
         </div>
