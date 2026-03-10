@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Heart, Bookmark, Download, Layers } from "lucide-react";
 
 interface CollectionCard {
   id: number;
@@ -20,6 +20,7 @@ interface CollectionCard {
 type CollectionPreviewGridProps = {
   collections: CollectionCard[];
   loading?: boolean;
+  previewCount?: number;
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -30,7 +31,7 @@ function isImageFile(url?: string | null) {
   return IMAGE_EXT_REGEX.test(clean);
 }
 
-const PREVIEW_GRID_SIZE = 15;
+const DEFAULT_PREVIEW_GRID_SIZE = 15;
 
 function buildImageCandidates(rawUrl: string): string[] {
   const trimmed = rawUrl.trim();
@@ -100,7 +101,15 @@ function buildImageCandidates(rawUrl: string): string[] {
   return candidates;
 }
 
-function FallbackImage({ url, alt }: { url: string; alt: string }) {
+function FallbackImage({
+  url,
+  alt,
+  loading = "lazy",
+}: {
+  url: string;
+  alt: string;
+  loading?: "lazy" | "eager";
+}) {
   const candidates = useMemo(() => buildImageCandidates(url), [url]);
   const [index, setIndex] = useState(0);
   const src = candidates[index];
@@ -115,6 +124,7 @@ function FallbackImage({ url, alt }: { url: string; alt: string }) {
       alt={alt}
       fill
       unoptimized
+      loading={loading}
       className="absolute inset-0 h-full w-full object-cover"
       onError={() => {
         setIndex((prev) => (prev + 1 < candidates.length ? prev + 1 : prev));
@@ -123,7 +133,133 @@ function FallbackImage({ url, alt }: { url: string; alt: string }) {
   );
 }
 
-export default function CollectionPreviewGrid({ collections, loading = false }: CollectionPreviewGridProps) {
+function CollectionCardItem({
+  item,
+  index,
+  previewCount,
+}: {
+  item: CollectionCard;
+  index: number;
+  previewCount: number;
+}) {
+  const cardRef = useRef<HTMLAnchorElement | null>(null);
+  const columns = previewCount <= 9 ? 3 : 5;
+  const rows = Math.ceil(previewCount / columns);
+  const eagerCount = Math.min(columns, previewCount);
+  const [loadAllPreviews, setLoadAllPreviews] = useState(index < 3);
+
+  useEffect(() => {
+    if (loadAllPreviews) {
+      return;
+    }
+    const node = cardRef.current;
+    if (!node) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setLoadAllPreviews(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "220px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadAllPreviews]);
+
+  const normalized = item.previewImages.filter((img) => isImageFile(img)).slice(0, previewCount);
+  const visibleLimit = loadAllPreviews ? previewCount : eagerCount;
+  const previewImages = normalized.slice(0, visibleLimit);
+  while (previewImages.length < previewCount) {
+    previewImages.push("");
+  }
+
+  return (
+    <Link
+      ref={cardRef}
+      href={`/collections/${item.id}`}
+      className="group flex flex-col bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-[0_30px_60px_-15px_rgba(15,23,42,0.1)] transition-all duration-500 overflow-hidden hover:-translate-y-2"
+    >
+      {/* Preview Grid */}
+      <div className="p-3 bg-slate-50/50">
+        <div
+          className="grid gap-1.5 w-full rounded-2xl overflow-hidden"
+          style={{
+            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            aspectRatio: `${columns}/${rows}`,
+          }}
+        >
+          {previewImages.map((img, idx) => (
+            <div
+              key={idx}
+              className="relative aspect-square overflow-hidden bg-white group-hover:scale-110 transition-transform duration-500"
+              style={{ transitionDelay: `${idx * 15}ms` }}
+            >
+              {img ? (
+                <FallbackImage
+                  url={img}
+                  alt={`preview-${idx}`}
+                  loading={index < 3 && idx < eagerCount ? "eager" : "lazy"}
+                />
+              ) : (
+                <div className="h-full w-full bg-white/50" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Collection Info */}
+      <div className="flex-1 p-6">
+        <div className="mb-4">
+          <h3 className="text-lg font-black text-slate-900 leading-tight mb-3 group-hover:text-emerald-600 transition-colors line-clamp-1">
+            {item.title}
+          </h3>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="relative w-6 h-6 rounded-full overflow-hidden ring-2 ring-slate-50">
+                <Image src={item.authorAvatar} alt={item.author} fill unoptimized loading="lazy" className="object-cover" />
+              </div>
+              <span className="text-xs font-bold text-slate-500 truncate max-w-[100px]">{item.author}</span>
+              <CheckCircle2 size={12} className="text-blue-500 fill-blue-50" />
+            </div>
+            <div className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">
+              <Layers size={12} />
+              <span className="text-[10px] font-black">{item.count}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 pt-4 border-t border-slate-50">
+          <div className="flex flex-col items-center py-1 rounded-xl transition-colors group-hover:bg-rose-50/50">
+            <Heart size={14} className="text-slate-300 group-hover:text-rose-500 transition-colors" />
+            <span className="text-[11px] font-black text-slate-400 group-hover:text-rose-600 mt-1">{item.likeCount}</span>
+          </div>
+          <div className="flex flex-col items-center py-1 rounded-xl transition-colors group-hover:bg-amber-50/50">
+            <Bookmark size={14} className="text-slate-300 group-hover:text-amber-500 transition-colors" />
+            <span className="text-[11px] font-black text-slate-400 group-hover:text-amber-600 mt-1">{item.favoriteCount}</span>
+          </div>
+          <div className="flex flex-col items-center py-1 rounded-xl transition-colors group-hover:bg-blue-50/50">
+            <Download size={14} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
+            <span className="text-[11px] font-black text-slate-400 group-hover:text-blue-600 mt-1">{item.downloadCount}</span>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+export default function CollectionPreviewGrid({
+  collections,
+  loading = false,
+  previewCount = DEFAULT_PREVIEW_GRID_SIZE,
+}: CollectionPreviewGridProps) {
+  const gridColumns = previewCount <= 9 ? 3 : 5;
+  const gridRows = Math.ceil(previewCount / gridColumns);
+
   if (loading && collections.length === 0) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -133,8 +269,14 @@ export default function CollectionPreviewGrid({ collections, loading = false }: 
             className="flex flex-col rounded-[2rem] border border-slate-100 bg-white shadow-sm overflow-hidden animate-pulse"
           >
             <div className="p-4 bg-slate-50/50">
-              <div className="grid grid-cols-5 gap-2 aspect-[5/3] w-full">
-                {Array.from({ length: PREVIEW_GRID_SIZE }).map((__, imgIdx) => (
+              <div
+                className="grid gap-2 w-full"
+                style={{
+                  gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
+                  aspectRatio: `${gridColumns}/${gridRows}`,
+                }}
+              >
+                {Array.from({ length: previewCount }).map((__, imgIdx) => (
                   <div key={imgIdx} className="aspect-square bg-slate-100" />
                 ))}
               </div>
@@ -160,74 +302,14 @@ export default function CollectionPreviewGrid({ collections, loading = false }: 
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-      {collections.map((item) => {
-        const previewImages = [...item.previewImages]
-          .filter((img) => isImageFile(img))
-          .slice(0, PREVIEW_GRID_SIZE);
-        while (previewImages.length < PREVIEW_GRID_SIZE) {
-          previewImages.push("");
-        }
-
-        return (
-        <Link
+      {collections.map((item, index) => (
+        <CollectionCardItem
           key={item.id}
-          href={`/collections/${item.id}`}
-          className="group flex flex-col bg-white border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-500 overflow-hidden"
-        >
-          {/* 5x3 Image Preview Grid */}
-          <div className="p-4 bg-slate-50/50">
-            <div className="grid grid-cols-5 gap-2 aspect-[5/3] w-full">
-              {previewImages.map((img, idx) => (
-                <div 
-                  key={idx} 
-                  className="relative aspect-square overflow-hidden bg-white border border-slate-100 group-hover:scale-105 transition-transform duration-300"
-                  style={{ transitionDelay: `${idx * 20}ms` }}
-                >
-                  {img ? <FallbackImage url={img} alt={`preview-${idx}`} /> : <div className="h-full w-full bg-slate-50" />}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Collection Info */}
-          <div className="flex-1 p-6">
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-black text-slate-900 leading-tight mb-2 group-hover:text-emerald-600 transition-colors truncate">
-                {item.title}
-              </h3>
-              <div className="flex items-center gap-2">
-                <div className="relative w-5 h-5 rounded-full overflow-hidden">
-                  <Image src={item.authorAvatar} alt={item.author} fill unoptimized />
-                </div>
-                <span className="text-sm font-bold text-slate-500 truncate">{item.author}</span>
-                <CheckCircle2 size={14} className="text-blue-500" fill="currentColor" />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">数量</span>
-              <span className="text-sm font-black text-slate-900">{item.count} Pcs</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">收藏</span>
-              <span className="text-sm font-black text-slate-900">{item.favoriteCount}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">下载</span>
-              <span className="text-sm font-black text-slate-900">{item.downloadCount}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">点赞</span>
-              <span className="text-sm font-black text-slate-900">{item.likeCount}</span>
-            </div>
-          </div>
-          </div>
-        </Link>
-        );
-      })}
+          item={item}
+          index={index}
+          previewCount={previewCount}
+        />
+      ))}
     </div>
   );
 }

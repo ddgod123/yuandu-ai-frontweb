@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import CollectionPreviewGrid from "@/components/categories/CollectionPreviewGrid";
-import { ChevronDown, Filter } from "lucide-react";
+import { ChevronDown, Filter, Info, LayoutGrid, Sparkles, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 const PREVIEW_COUNT = 15;
@@ -389,123 +389,133 @@ export default function TrendingPage() {
 
   return (
     <main className="min-h-screen bg-white">
-      <section className="border-b border-slate-100 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="text-3xl font-black text-slate-900">表情包IP</h1>
-              <p className="mt-2 text-sm font-medium text-slate-500">
-                展示“IP人物”分类下的合集内容，支持按二级分类快速筛选。
-              </p>
-            </div>
-            {rootCategory ? (
-              <div className="rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-500">
-                一级分类：{rootCategory.name} · {total} 个合集
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedChild("all")}
-              className={`rounded-full px-4 py-2 text-sm font-bold transition-all ${
-                selectedChild === "all"
-                  ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              全部
-            </button>
-            {childCategories.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSelectedChild(item.id)}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition-all ${
-                  selectedChild === item.id
-                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                <span>{item.icon}</span>
-                <span>{item.name}</span>
-              </button>
-            ))}
-            <div className="relative shrink-0">
-              <Filter
-                size={16}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-              />
-              <select
-                value={selectedSortID}
-                onChange={(event) => setSelectedSortID(event.target.value)}
-                className="h-10 appearance-none rounded-lg border border-slate-200 bg-white pl-9 pr-9 text-sm font-bold text-slate-600 outline-none transition-colors hover:bg-slate-50 focus:border-emerald-300"
-                aria-label="IP 合集排序"
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
+      <section className="sticky top-16 z-40 border-b border-slate-100 bg-white/80 backdrop-blur-xl">
+        <div className="mx-auto max-w-7xl px-6 py-4">
+            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap items-center gap-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedChild("all")}
+                  className={`group flex items-center gap-2.5 px-6 py-3 rounded-2xl font-black transition-all text-sm ${
+                    selectedChild === "all"
+                      ? "bg-emerald-500 text-white shadow-xl shadow-emerald-200 scale-105"
+                      : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className={`text-base transition-transform group-hover:scale-110 ${selectedChild === "all" ? "scale-110" : ""}`}>
+                    🌈
+                  </span>
+                  <span>全部专题</span>
+                </button>
+                {childCategories.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedChild(item.id)}
+                    className={`group flex items-center gap-2.5 px-6 py-3 rounded-2xl font-black transition-all text-sm ${
+                      selectedChild === item.id
+                        ? "bg-emerald-500 text-white shadow-xl shadow-emerald-200 scale-105"
+                        : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span className={`text-xl transition-transform group-hover:scale-120 ${selectedChild === item.id ? "scale-110" : ""}`}>
+                      {item.icon}
+                    </span>
+                    <span>{item.name}</span>
+                  </button>
                 ))}
-              </select>
-              <ChevronDown
-                size={16}
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="relative group">
+                  <Filter
+                    size={14}
+                    className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-emerald-500 transition-colors"
+                  />
+                  <select
+                    value={selectedSortID}
+                    onChange={(event) => setSelectedSortID(event.target.value)}
+                    className="h-12 appearance-none rounded-2xl border-2 border-slate-50 bg-slate-50 pl-10 pr-12 text-sm font-black text-slate-600 outline-none transition-all hover:border-emerald-100 hover:bg-white focus:border-emerald-500 focus:bg-white focus:ring-8 focus:ring-emerald-500/5"
+                    aria-label="IP 合集排序"
+                  >
+                    {SORT_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={14}
+                    className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-300"
+                  />
+                </div>
+
+                {(selectedChild !== "all" || selectedSortID !== SORT_OPTIONS[0].id) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedChild("all");
+                      setSelectedSortID(SORT_OPTIONS[0].id);
+                      setCurrentPage(1);
+                    }}
+                    className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-rose-50 bg-rose-50 text-rose-500 transition-all hover:bg-rose-100 hover:border-rose-100"
+                    title="重置所有筛选"
+                  >
+                    <X size={20} />
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="ml-1 text-xs font-semibold text-slate-400">
-              当前筛选：{selectedChildLabel}
-            </div>
-            {(selectedChild !== "all" || selectedSortID !== SORT_OPTIONS[0].id) ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedChild("all");
-                  setSelectedSortID(SORT_OPTIONS[0].id);
-                  setCurrentPage(1);
-                }}
-                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-50"
-              >
-                清空筛选
-              </button>
-            ) : null}
-            {rootCategory && childCategories.length === 0 ? (
-              <span className="ml-1 text-xs font-semibold text-slate-400">
-                当前一级分类暂无二级分类，默认展示该一级分类下全部合集
-              </span>
-            ) : null}
-          </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-6 py-8">
+      <section className="mx-auto max-w-7xl px-6 py-10">
+        {/* 背景装饰 */}
+        <div className="fixed right-0 top-0 -z-10 h-[500px] w-[500px] -translate-y-1/4 translate-x-1/4 rounded-full bg-emerald-50/30 blur-[100px]" />
+        <div className="fixed bottom-0 left-0 -z-10 h-[500px] w-[500px] translate-y-1/4 -translate-x-1/4 rounded-full bg-blue-50/30 blur-[100px]" />
+
         {loadingCategories ? (
-          <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-sm font-semibold text-slate-500">
-            正在加载分类...
+          <div className="flex min-h-[200px] items-center justify-center rounded-[2rem] border border-slate-100 bg-white p-10 shadow-sm">
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-100 border-t-emerald-500" />
+              <p className="text-sm font-bold text-slate-400 tracking-wider">正在加载分类...</p>
+            </div>
           </div>
         ) : null}
 
         {!loadingCategories && !rootCategory ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-700">
+            <Info className="shrink-0" size={18} />
             未找到一级分类“IP人物”。请在管理端确认分类名称后刷新页面。
           </div>
         ) : null}
 
         {errorMessage ? (
-          <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600">
+          <div className="mb-8 flex items-center gap-3 rounded-2xl border border-rose-100 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-500 animate-in fade-in slide-in-from-top-2">
+            <div className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
             {errorMessage}
           </div>
         ) : null}
 
-        {rootCategory ? (
+        {rootCategory && (
           <>
+            <div className="mb-6 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-black text-slate-900">
+                  {selectedChild === "all" ? "全部 IP 合集" : selectedChildLabel}
+                </h2>
+                <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">
+                  {total} 个结果
+                </span>
+              </div>
+            </div>
+
             <CollectionPreviewGrid collections={collections} loading={loadingCollections} />
 
             {totalPages > 1 ? (
-              <div className="mt-12 flex flex-wrap items-center justify-center gap-2 text-slate-500">
+              <div className="mt-16 flex flex-wrap items-center justify-center gap-2 text-slate-500">
                 <button
-                  className="h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+                  className="h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 transition-all hover:shadow-md"
                   onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
                   aria-label="上一页"
@@ -521,10 +531,10 @@ export default function TrendingPage() {
                   ) : (
                     <button
                       key={item}
-                      className={`h-10 w-10 rounded-full font-bold transition-colors ${
+                      className={`h-10 w-10 rounded-full font-bold transition-all ${
                         currentPage === item
-                          ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
-                          : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                          ? "bg-emerald-500 text-white shadow-lg shadow-emerald-200"
+                          : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
                       }`}
                       onClick={() => setCurrentPage(item)}
                     >
@@ -534,18 +544,17 @@ export default function TrendingPage() {
                 )}
 
                 <button
-                  className="h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+                  className="h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 transition-all hover:shadow-md"
                   onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
                   disabled={currentPage === totalPages}
                   aria-label="下一页"
                 >
                   ›
                 </button>
-                <span className="ml-2 text-sm">共 {totalPages} 页</span>
               </div>
             ) : null}
           </>
-        ) : null}
+        )}
       </section>
     </main>
   );

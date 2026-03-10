@@ -4,8 +4,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp } from "lucide-react";
-import { API_BASE, fetchWithAuth, fetchWithAuthRetry, hasValidAccessToken } from "@/lib/auth-client";
+import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Share2, Info, Bookmark, ChevronDown } from "lucide-react";
+import { API_BASE, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 const PAGE_SIZE = 60;
 
@@ -91,13 +91,45 @@ function buildCollectionZipName(title?: string | null, collectionId?: number) {
   return `${base}.zip`;
 }
 
-async function parseApiErrorCode(res: Response) {
+type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+};
+
+async function parseApiError(res: Response) {
   try {
-    const payload = (await res.json()) as { error?: string };
-    return (payload?.error || "").trim();
+    const payload = (await res.clone().json()) as ApiErrorPayload;
+    return {
+      code: (payload?.error || "").trim(),
+      message: (payload?.message || "").trim(),
+    };
   } catch {
-    return "";
+    return { code: "", message: "" };
   }
+}
+
+function resolveActionNotice(status: number, code: string, fallback: string, actionLabel: string) {
+  if (status === 403) {
+    if (code === "user_disabled") return "账号状态异常，暂时无法操作";
+    if (code === "subscription_required") return `${actionLabel}需要订阅权限，请先开通订阅`;
+    return "暂无权限，请稍后再试";
+  }
+  if (status === 404) return "目标内容不存在或已下架";
+  if (status === 429) return `${actionLabel}过于频繁，请稍后重试`;
+  if (status >= 500) return "服务繁忙，请稍后重试";
+  return fallback;
+}
+
+function resolveDownloadNotice(status: number, code: string, fallback: string, targetLabel: string) {
+  if (status === 403) {
+    if (code === "user_disabled") return "账号状态异常，暂时无法下载";
+    if (code === "subscription_required") return `${targetLabel}需要订阅权限，请到个人中心开通`;
+    return "暂无下载权限";
+  }
+  if (status === 404) return "资源不存在或已下架";
+  if (status === 429) return "下载过于频繁，请稍后重试";
+  if (status >= 500) return "下载服务繁忙，请稍后重试";
+  return fallback;
 }
 
 function buildImageCandidates(rawUrl: string): string[] {
@@ -355,15 +387,15 @@ export default function CollectionDetailPage() {
     router.push(`/login?next=${encodeURIComponent(nextPath)}`);
   };
 
-  const ensureAuthenticated = (message: string) => {
-    if (hasValidAccessToken()) return true;
+  const ensureAuthenticated = async (message: string) => {
+    if (await ensureAuthSession()) return true;
     openAuthPrompt(message);
     return false;
   };
 
   const handleDownloadZip = async (zipKey?: string) => {
     if (!collectionId || downloadingZip) return;
-    if (!ensureAuthenticated("请先登录再继续下载")) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
     setNotice(null);
     setDownloadingZip(true);
     try {
@@ -374,20 +406,17 @@ export default function CollectionDetailPage() {
       const url = params.toString()
         ? `${API_BASE}/collections/${collectionId}/download-zip?${params.toString()}`
         : `${API_BASE}/collections/${collectionId}/download-zip`;
-      const res = await fetchWithAuth(url);
+      const res = await fetchWithAuthRetry(url);
       if (res.status === 401) {
         openAuthPrompt("请先登录再继续下载");
         return;
       }
       if (res.status === 403) {
-        const errorCode = await parseApiErrorCode(res);
-        if (errorCode === "subscription_required") {
-          setNotice("下载合集需要订阅权限，请到个人中心使用兑换码开通");
-        } else if (errorCode === "user_disabled") {
-          setNotice("账号状态异常，暂时无法下载");
-        } else {
-          setNotice("暂无下载权限");
-        }
+        const apiErr = await parseApiError(res);
+        setNotice(
+          apiErr.message ||
+            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载合集")
+        );
         return;
       }
       if (!res.ok) {
@@ -410,25 +439,22 @@ export default function CollectionDetailPage() {
 
   const handleDownloadAllZips = async () => {
     if (!collectionId || downloadingZip || zipItems.length === 0) return;
-    if (!ensureAuthenticated("请先登录再继续下载")) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
     setNotice(null);
     setDownloadingZip(true);
     setDownloadingAllZipBundle(true);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/collections/${collectionId}/download-zip-all`);
+      const res = await fetchWithAuthRetry(`${API_BASE}/collections/${collectionId}/download-zip-all`);
       if (res.status === 401) {
         openAuthPrompt("请先登录再继续下载");
         return;
       }
       if (res.status === 403) {
-        const errorCode = await parseApiErrorCode(res);
-        if (errorCode === "subscription_required") {
-          setNotice("下载合集需要订阅权限，请到个人中心使用兑换码开通");
-        } else if (errorCode === "user_disabled") {
-          setNotice("账号状态异常，暂时无法下载");
-        } else {
-          setNotice("暂无下载权限");
-        }
+        const apiErr = await parseApiError(res);
+        setNotice(
+          apiErr.message ||
+            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载合集")
+        );
         return;
       }
       if (!res.ok) {
@@ -452,30 +478,29 @@ export default function CollectionDetailPage() {
   const handleZipButtonClick = () => {
     if (loadingZips) return;
     if (zipItems.length <= 1) {
-      handleDownloadZip(zipItems[0]?.key);
+      void handleDownloadZip(zipItems[0]?.key);
       return;
     }
-    handleDownloadAllZips();
+    void handleDownloadAllZips();
   };
 
   const handleDownloadEmoji = async (emojiId: number) => {
     if (!emojiId || downloadingEmoji) return;
-    if (!ensureAuthenticated("请先登录再继续下载")) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
     setNotice(null);
     setDownloadingEmoji(emojiId);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/emojis/${emojiId}/download-file`);
+      const res = await fetchWithAuthRetry(`${API_BASE}/emojis/${emojiId}/download-file`);
       if (res.status === 401) {
         openAuthPrompt("请先登录再继续下载");
         return;
       }
       if (res.status === 403) {
-        const errorCode = await parseApiErrorCode(res);
-        if (errorCode === "user_disabled") {
-          setNotice("账号状态异常，暂时无法下载");
-        } else {
-          setNotice("暂无下载权限");
-        }
+        const apiErr = await parseApiError(res);
+        setNotice(
+          apiErr.message ||
+            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载表情")
+        );
         return;
       }
       if (!res.ok) {
@@ -501,7 +526,7 @@ export default function CollectionDetailPage() {
 
   const toggleEmojiFavorite = async (emoji: ApiEmoji) => {
     if (!emoji?.id || togglingEmojiFavorite === emoji.id) return;
-    if (!ensureAuthenticated("请先登录再继续收藏")) return;
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
     setNotice(null);
     setTogglingEmojiFavorite(emoji.id);
     try {
@@ -519,7 +544,8 @@ export default function CollectionDetailPage() {
         return;
       }
       if (!res.ok) {
-        setNotice("收藏操作失败，请稍后重试");
+        const apiErr = await parseApiError(res);
+        setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "收藏操作失败，请稍后重试", "收藏"));
         return;
       }
       setEmojis((prev) =>
@@ -574,7 +600,7 @@ export default function CollectionDetailPage() {
 
   const toggleCollectionLike = async () => {
     if (!collectionId || togglingLike || !collection) return;
-    if (!ensureAuthenticated("请先登录再继续点赞")) return;
+    if (!(await ensureAuthenticated("请先登录再继续点赞"))) return;
     setNotice(null);
     setTogglingLike(true);
     try {
@@ -587,7 +613,8 @@ export default function CollectionDetailPage() {
         return;
       }
       if (!res.ok) {
-        setNotice("操作失败，请稍后重试");
+        const apiErr = await parseApiError(res);
+        setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "点赞失败，请稍后重试", "点赞"));
         return;
       }
       const data = (await res.json()) as {
@@ -599,7 +626,7 @@ export default function CollectionDetailPage() {
       };
       updateCollectionActionSummary(data);
     } catch {
-      setNotice("操作失败，请稍后重试");
+      setNotice("点赞失败，请稍后重试");
     } finally {
       setTogglingLike(false);
     }
@@ -607,7 +634,7 @@ export default function CollectionDetailPage() {
 
   const toggleCollectionFavorite = async () => {
     if (!collectionId || togglingFavorite || !collection) return;
-    if (!ensureAuthenticated("请先登录再继续收藏")) return;
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
     setNotice(null);
     setTogglingFavorite(true);
     try {
@@ -620,7 +647,8 @@ export default function CollectionDetailPage() {
         return;
       }
       if (!res.ok) {
-        setNotice("操作失败，请稍后重试");
+        const apiErr = await parseApiError(res);
+        setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "收藏失败，请稍后重试", "收藏"));
         return;
       }
       const data = (await res.json()) as {
@@ -632,21 +660,21 @@ export default function CollectionDetailPage() {
       };
       updateCollectionActionSummary(data);
     } catch {
-      setNotice("操作失败，请稍后重试");
+      setNotice("收藏失败，请稍后重试");
     } finally {
       setTogglingFavorite(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-slate-50/30">
       {downloadingAllZipBundle ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/35 backdrop-blur-[2px]">
-          <div className="flex w-[320px] max-w-[90vw] flex-col items-center rounded-2xl bg-white px-8 py-7 shadow-2xl">
+          <div className="flex w-[320px] max-w-[90vw] flex-col items-center rounded-[2rem] bg-white px-8 py-7 shadow-2xl">
             <Loader2 size={30} className="animate-spin text-emerald-600" />
-            <div className="mt-4 text-base font-black text-slate-900">正在下载中...</div>
+            <div className="mt-4 text-base font-black text-slate-900">正在打包中...</div>
             <p className="mt-2 text-center text-xs font-semibold text-slate-500">
-              正在打包并下载合集 ZIP，请稍候
+              正在准备您的合集 ZIP，请稍候
             </p>
           </div>
         </div>
@@ -659,164 +687,193 @@ export default function CollectionDetailPage() {
         onLogin={handleGoLogin}
       />
 
-      <div className="border-b border-slate-100 bg-white/90 backdrop-blur-xl sticky top-16 z-40">
+      {/* Sticky Header */}
+      <div className="sticky top-16 z-40 border-b border-slate-100 bg-white/80 backdrop-blur-xl shadow-sm">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <Link
               href="/categories"
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50"
+              className="group flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-all hover:border-emerald-200 hover:text-emerald-500 hover:shadow-md"
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-0.5" />
             </Link>
             <div>
-              <div className="text-xs font-semibold text-slate-400 uppercase">合集详情</div>
-              <h1 className="text-xl font-black text-slate-900">
+              <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <Layers size={12} />
+                合集详情
+              </div>
+              <h1 className="text-xl font-black text-slate-900 line-clamp-1">
                 {collection?.title || (loadingDetail ? "加载中..." : "未找到合集")}
               </h1>
             </div>
           </div>
           <button
             onClick={handleZipButtonClick}
-            className="flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-600 transition-colors disabled:opacity-60"
+            className="group relative flex items-center gap-2 overflow-hidden rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 active:scale-95 disabled:opacity-60"
             disabled={downloadingZip || loadingZips || !collectionId}
           >
-            <Download size={16} />
-            {loadingZips
-              ? "加载中..."
-              : downloadingZip
-              ? "生成中..."
-              : zipItems.length > 1
-              ? "下载全部 ZIP"
-              : "下载合集 ZIP"}
+            <Download size={16} className="relative z-10" />
+            <span className="relative z-10">
+              {loadingZips
+                ? "加载中..."
+                : downloadingZip
+                ? "生成中..."
+                : zipItems.length > 1
+                ? "下载全部 ZIP"
+                : "下载合集 ZIP"}
+            </span>
           </button>
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-6 py-8">
+      <div className="mx-auto max-w-7xl px-6 py-10">
+        {/* 背景装饰 */}
+        <div className="fixed right-0 top-0 -z-10 h-[500px] w-[500px] -translate-y-1/4 translate-x-1/4 rounded-full bg-emerald-50/30 blur-[100px]" />
+        <div className="fixed bottom-0 left-0 -z-10 h-[500px] w-[500px] translate-y-1/4 -translate-x-1/4 rounded-full bg-blue-50/30 blur-[100px]" />
+
         {notice ? (
-          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+          <div className="mb-8 flex items-center gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-700 animate-in fade-in slide-in-from-top-2">
+            <Info size={18} />
             {notice}
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div className="text-sm font-semibold text-slate-500">
-            共 {collection?.file_count || total} 张表情
+        {/* 统计与交互区 */}
+        <div className="mb-12 flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+          <div className="space-y-2">
+            <h2 className="text-sm font-bold text-slate-400">
+              本合集共收录 <span className="text-slate-900 font-black">{(collection?.file_count || total).toLocaleString()}</span> 张表情
+            </h2>
+            <div className="h-1 w-12 rounded-full bg-emerald-500" />
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-10">
+
+          <div className="flex items-center gap-6 self-center md:self-end">
+            {/* 点赞 */}
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
                 onClick={toggleCollectionLike}
                 disabled={togglingLike}
-                className={`flex h-14 w-14 items-center justify-center rounded-full text-white shadow-lg transition ${
+                className={`group flex h-16 w-16 items-center justify-center rounded-[1.5rem] shadow-lg transition-all active:scale-90 ${
                   collection?.liked
-                    ? "bg-gradient-to-br from-emerald-500 to-teal-500"
-                    : "bg-gradient-to-br from-cyan-400 to-blue-500"
+                    ? "bg-emerald-500 text-white shadow-emerald-200"
+                    : "bg-white text-slate-400 border border-slate-100 hover:border-emerald-200 hover:text-emerald-500"
                 } disabled:opacity-70`}
               >
-                <ThumbsUp size={20} />
+                <ThumbsUp size={24} className={collection?.liked ? "fill-current" : ""} />
               </button>
-              <div className="text-xs font-semibold text-slate-500">点赞</div>
-              <div className="text-sm font-black text-slate-900">{collection?.like_count || 0}</div>
+              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">点赞</span>
+              <span className="text-sm font-black text-slate-900">{collection?.like_count || 0}</span>
             </div>
+
+            {/* 收藏 */}
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
                 onClick={toggleCollectionFavorite}
                 disabled={togglingFavorite}
-                className={`flex h-14 w-14 items-center justify-center rounded-full text-white shadow-lg transition ${
+                className={`group flex h-16 w-16 items-center justify-center rounded-[1.5rem] shadow-lg transition-all active:scale-90 ${
                   collection?.favorited
-                    ? "bg-gradient-to-br from-rose-500 to-pink-500"
-                    : "bg-gradient-to-br from-cyan-400 to-blue-500"
+                    ? "bg-amber-500 text-white shadow-amber-200"
+                    : "bg-white text-slate-400 border border-slate-100 hover:border-amber-200 hover:text-amber-500"
                 } disabled:opacity-70`}
               >
-                <Heart size={20} />
+                <Bookmark size={24} className={collection?.favorited ? "fill-current" : ""} />
               </button>
-              <div className="text-xs font-semibold text-slate-500">收藏</div>
-              <div className="text-sm font-black text-slate-900">{collection?.favorite_count || 0}</div>
+              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">收藏</span>
+              <span className="text-sm font-black text-slate-900">{collection?.favorite_count || 0}</span>
             </div>
+
+            {/* 下载数展示 */}
             <div className="flex flex-col items-center gap-2">
-              <button
-                type="button"
-                onClick={handleZipButtonClick}
-                disabled={downloadingZip || loadingZips || !collectionId}
-                className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 text-white shadow-lg disabled:opacity-70"
-              >
-                <Download size={20} />
-              </button>
-              <div className="text-xs font-semibold text-slate-500">下载</div>
-              <div className="text-sm font-black text-slate-900">{collection?.download_count || 0}</div>
+              <div className="flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-slate-50 text-slate-300 border border-slate-100">
+                <Download size={24} />
+              </div>
+              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">总下载</span>
+              <span className="text-sm font-black text-slate-900">{collection?.download_count || 0}</span>
             </div>
           </div>
         </div>
 
-        <div className="mt-10">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-black text-slate-900">单张表情下载</h2>
-            <div className="text-xs font-semibold text-slate-400">已展示 {emojis.length} / {total}</div>
+        {/* 表情列表 */}
+        <div className="space-y-8">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+              单张表情下载
+              <span className="text-xs font-bold text-slate-300">/ Single Download</span>
+            </h3>
+            <div className="rounded-lg bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-400">
+              已展示 {emojis.length} / {total}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
             {emojis.map((emoji) => {
               const preview = emoji.preview_url || emoji.file_url || "";
               const formatLabel = getEmojiFormatLabel(emoji);
+              const isDownloaded = downloadedEmoji === emoji.id;
+              
               return (
                 <div
                   key={emoji.id}
-                  className="group rounded-2xl border border-slate-100 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                  className="group relative flex flex-col rounded-[2rem] border border-slate-100 bg-white p-3 shadow-sm transition-all duration-500 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(15,23,42,0.1)]"
                 >
-                  <div className="relative aspect-square overflow-hidden rounded-xl bg-slate-50">
+                  <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-50">
                     {preview ? <FallbackImage url={preview} alt={emoji.title} /> : null}
-                    <div className="absolute left-2 top-2 rounded-full bg-slate-900/80 px-2 py-1 text-[10px] font-black text-white">
+                    <div className="absolute left-2 top-2 rounded-lg bg-black/50 px-2 py-1 text-[9px] font-black text-white backdrop-blur-md">
                       {formatLabel}
                     </div>
+                    
+                    {/* 悬浮遮罩 */}
+                    <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                   </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="text-[11px] font-semibold text-slate-400">
-                      {getEmojiSizeLabel(emoji.size_bytes)}
-                    </div>
-                    <div className="flex items-center gap-2">
+
+                  <div className="mt-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[10px] font-bold text-slate-400">
+                        {getEmojiSizeLabel(emoji.size_bytes)}
+                      </span>
                       <button
                         type="button"
                         onClick={() => toggleEmojiFavorite(emoji)}
-                        className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all ${
                           emoji.favorited
-                            ? "border-rose-200 bg-rose-50 text-rose-500"
-                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                            ? "bg-rose-50 text-rose-500"
+                            : "text-slate-300 hover:bg-slate-50 hover:text-rose-400"
                         }`}
                         disabled={togglingEmojiFavorite === emoji.id}
-                        aria-label={emoji.favorited ? "取消收藏" : "收藏"}
                       >
                         {togglingEmojiFavorite === emoji.id ? (
-                          <Loader2 size={14} className="animate-spin" />
+                          <Loader2 size={12} className="animate-spin" />
                         ) : (
                           <Heart size={14} className={emoji.favorited ? "fill-current" : ""} />
                         )}
                       </button>
-                      <button
-                        onClick={() => handleDownloadEmoji(emoji.id)}
-                        className="flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-600 transition-colors disabled:opacity-60"
-                        disabled={downloadingEmoji === emoji.id}
-                      >
-                        {downloadingEmoji === emoji.id ? (
-                          <>
-                            <Loader2 size={12} className="animate-spin" />
-                            下载中
-                          </>
-                        ) : downloadedEmoji === emoji.id ? (
-                          <>
-                            <Check size={12} />
-                            已下载
-                          </>
-                        ) : (
-                          <>
-                            <Download size={12} />
-                            下载
-                          </>
-                        )}
-                      </button>
                     </div>
+
+                    <button
+                      onClick={() => handleDownloadEmoji(emoji.id)}
+                      className={`flex h-9 w-full items-center justify-center gap-2 rounded-xl text-[11px] font-bold transition-all ${
+                        isDownloaded
+                          ? "bg-emerald-50 text-emerald-600"
+                          : "bg-slate-50 text-slate-500 hover:bg-slate-900 hover:text-white hover:shadow-lg hover:shadow-slate-200"
+                      } disabled:opacity-60`}
+                      disabled={downloadingEmoji === emoji.id}
+                    >
+                      {downloadingEmoji === emoji.id ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : isDownloaded ? (
+                        <>
+                          <Check size={14} />
+                          已保存
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} />
+                          下载
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               );
@@ -824,13 +881,20 @@ export default function CollectionDetailPage() {
           </div>
 
           {canLoadMore ? (
-            <div className="mt-8 flex justify-center">
+            <div className="mt-16 flex justify-center">
               <button
                 onClick={() => setPage((prev) => prev + 1)}
-                className="rounded-full border border-slate-200 px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-10 py-4 text-sm font-bold text-slate-600 shadow-sm transition-all hover:border-emerald-200 hover:text-emerald-600 hover:shadow-md active:scale-95"
                 disabled={loading}
               >
-                {loading ? "加载中..." : "加载更多"}
+                {loading ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <>
+                    <span>加载更多表情</span>
+                    <ChevronDown size={18} className="transition-transform group-hover:translate-y-0.5" />
+                  </>
+                )}
               </button>
             </div>
           ) : null}

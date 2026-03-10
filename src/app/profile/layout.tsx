@@ -6,41 +6,57 @@ import ProfileMenu from "@/components/profile/ProfileMenu";
 import {
   AUTH_CHANGE_EVENT,
   clearAuthSession,
+  ensureAuthSession,
   hasStoredAuthState,
-  hasValidAccessToken,
 } from "@/lib/auth-client";
 
 export default function ProfileLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [isAuthorized, setIsAuthorized] = useState(() => hasValidAccessToken());
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const syncAuth = () => {
-      setIsAuthorized(hasValidAccessToken());
+    let cancelled = false;
+    const syncAuth = async () => {
+      const ok = await ensureAuthSession();
+      if (cancelled) return;
+      setIsAuthorized(ok);
+      setAuthChecked(true);
     };
-    syncAuth();
+    void syncAuth();
 
-    window.addEventListener("storage", syncAuth);
-    window.addEventListener("focus", syncAuth);
-    window.addEventListener(AUTH_CHANGE_EVENT, syncAuth as EventListener);
+    const onStorage = () => {
+      void syncAuth();
+    };
+    const onFocus = () => {
+      void syncAuth();
+    };
+    const onAuthChange = () => {
+      void syncAuth();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(AUTH_CHANGE_EVENT, onAuthChange as EventListener);
     return () => {
-      window.removeEventListener("storage", syncAuth);
-      window.removeEventListener("focus", syncAuth);
-      window.removeEventListener(AUTH_CHANGE_EVENT, syncAuth as EventListener);
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(AUTH_CHANGE_EVENT, onAuthChange as EventListener);
     };
   }, []);
 
   useEffect(() => {
+    if (!authChecked) return;
     if (!isAuthorized) {
       if (hasStoredAuthState()) {
         clearAuthSession();
       }
       router.replace("/login");
     }
-  }, [isAuthorized, router]);
+  }, [authChecked, isAuthorized, router]);
 
-  if (!isAuthorized) {
+  if (!authChecked || !isAuthorized) {
     return (
       <div className="min-h-screen bg-slate-50">
         <div className="mx-auto max-w-7xl px-6 py-16 text-center text-sm font-semibold text-slate-400">

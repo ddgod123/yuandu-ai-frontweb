@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   expiresAt: "expires_at",
   displayName: "user_display_name",
   avatarURL: "user_avatar_url",
+  deviceID: "device_id",
 } as const;
 
 export const AUTH_CHANGE_EVENT = "auth-change";
@@ -34,6 +35,32 @@ export type AuthUserSnapshot = {
 
 function canUseWindow() {
   return typeof window !== "undefined";
+}
+
+function randomPart(length: number) {
+  const chars = "abcdef0123456789";
+  const arr = new Uint8Array(length);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(arr);
+  } else {
+    for (let i = 0; i < length; i += 1) arr[i] = Math.floor(Math.random() * 256);
+  }
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += chars[arr[i] % chars.length];
+  }
+  return out;
+}
+
+export function getOrCreateDeviceID() {
+  if (!canUseWindow()) return "";
+  const cached = window.localStorage.getItem(STORAGE_KEYS.deviceID) || "";
+  if (/^[A-Za-z0-9_-]{8,128}$/.test(cached)) {
+    return cached;
+  }
+  const deviceID = `dv_${Date.now().toString(36)}_${randomPart(16)}`;
+  window.localStorage.setItem(STORAGE_KEYS.deviceID, deviceID);
+  return deviceID;
 }
 
 export function buildDefaultAvatar(seed: string) {
@@ -69,6 +96,10 @@ export function hasValidAccessToken() {
     return false;
   }
   return true;
+}
+
+function hasRefreshToken() {
+  return Boolean(getRefreshToken());
 }
 
 export function hasStoredAuthState() {
@@ -133,6 +164,12 @@ function withAuthHeaders(headers?: HeadersInit) {
   if (token && !next.has("Authorization")) {
     next.set("Authorization", `Bearer ${token}`);
   }
+  if (!next.has("X-Device-ID")) {
+    const deviceID = getOrCreateDeviceID();
+    if (deviceID) {
+      next.set("X-Device-ID", deviceID);
+    }
+  }
   return next;
 }
 
@@ -166,6 +203,17 @@ export async function refreshAuthSession() {
   })();
 
   return refreshingPromise;
+}
+
+export async function ensureAuthSession() {
+  if (hasValidAccessToken()) return true;
+  if (!hasRefreshToken()) return false;
+  const refreshed = await refreshAuthSession();
+  if (!refreshed) {
+    clearAuthSession();
+    return false;
+  }
+  return true;
 }
 
 export async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}) {

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -8,6 +9,10 @@ type FooterSetting = {
   siteDescription: string;
   contactEmail: string;
   complaintEmail: string;
+  selfMediaLogo: string;
+  selfMediaLogoURL: string;
+  selfMediaQRCode: string;
+  selfMediaQRCodeURL: string;
   icpNumber: string;
   icpLink: string;
   publicSecurityNumber: string;
@@ -23,6 +28,10 @@ const DEFAULT_SETTING: FooterSetting = {
     "致力于收集、整理和分享互联网表情包资源。本站提供合集浏览、下载与收藏功能，服务于个人非商业交流场景。",
   contactEmail: "contact@emoji-archive.com",
   complaintEmail: "contact@emoji-archive.com",
+  selfMediaLogo: "",
+  selfMediaLogoURL: "",
+  selfMediaQRCode: "",
+  selfMediaQRCodeURL: "",
   icpNumber: "ICP备案号：待补充",
   icpLink: "",
   publicSecurityNumber: "公安备案号：待补充",
@@ -35,6 +44,10 @@ function normalizeSetting(payload: Partial<FooterSetting> | null | undefined): F
     ...DEFAULT_SETTING,
     ...(payload || {}),
   };
+}
+
+function isHTTPURL(value: string) {
+  return /^https?:\/\//i.test(value.trim());
 }
 
 export default function Footer() {
@@ -57,6 +70,10 @@ export default function Footer() {
           site_description?: string;
           contact_email?: string;
           complaint_email?: string;
+          self_media_logo?: string;
+          self_media_logo_url?: string;
+          self_media_qr_code?: string;
+          self_media_qr_code_url?: string;
           icp_number?: string;
           icp_link?: string;
           public_security_number?: string;
@@ -70,6 +87,10 @@ export default function Footer() {
             siteDescription: data.site_description || "",
             contactEmail: data.contact_email || "",
             complaintEmail: data.complaint_email || "",
+            selfMediaLogo: data.self_media_logo || "",
+            selfMediaLogoURL: data.self_media_logo_url || "",
+            selfMediaQRCode: data.self_media_qr_code || "",
+            selfMediaQRCodeURL: data.self_media_qr_code_url || "",
             icpNumber: data.icp_number || "",
             icpLink: data.icp_link || "",
             publicSecurityNumber: data.public_security_number || "",
@@ -95,11 +116,17 @@ export default function Footer() {
   const publicSecurityNumber =
     setting.publicSecurityNumber.trim() || DEFAULT_SETTING.publicSecurityNumber;
   const copyrightText = setting.copyrightText.trim() || DEFAULT_SETTING.copyrightText;
+  const selfMediaLogoURL =
+    setting.selfMediaLogoURL.trim() ||
+    (isHTTPURL(setting.selfMediaLogo) ? setting.selfMediaLogo.trim() : "");
+  const selfMediaQRCodeURL =
+    setting.selfMediaQRCodeURL.trim() ||
+    (isHTTPURL(setting.selfMediaQRCode) ? setting.selfMediaQRCode.trim() : "");
 
   return (
     <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-6">
-        <div className="grid gap-10 py-12 md:grid-cols-4">
+        <div className="grid gap-10 py-12 md:grid-cols-5">
           <div className="md:col-span-2">
             <Link href="/" className="inline-flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm text-white shadow-lg shadow-emerald-200/60">
@@ -115,6 +142,7 @@ export default function Footer() {
               </a>
             </p>
           </div>
+
           <div>
             <h4 className="text-sm font-black tracking-wide text-slate-900">站点导航</h4>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
@@ -140,6 +168,7 @@ export default function Footer() {
               </li>
             </ul>
           </div>
+
           <div>
             <h4 className="text-sm font-black tracking-wide text-slate-900">服务与协议</h4>
             <ul className="mt-4 space-y-2 text-sm text-slate-600">
@@ -169,6 +198,35 @@ export default function Footer() {
                 </Link>
               </li>
             </ul>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-black tracking-wide text-slate-900">自媒体</h4>
+            <div className="mt-4 space-y-3 text-sm text-slate-600">
+              {selfMediaLogoURL ? (
+                <div className="flex items-center gap-2">
+                  <img
+                    src={selfMediaLogoURL}
+                    alt="自媒体 logo"
+                    className="h-10 w-10 rounded-xl border border-slate-200 object-cover"
+                  />
+                  <span className="text-xs text-slate-500">品牌 Logo</span>
+                </div>
+              ) : null}
+
+              {selfMediaQRCodeURL ? (
+                <div className="inline-flex flex-col rounded-xl border border-slate-200 bg-slate-50 p-2">
+                  <img
+                    src={selfMediaQRCodeURL}
+                    alt="自媒体二维码"
+                    className="h-24 w-24 rounded-lg object-cover"
+                  />
+                  <span className="mt-2 text-center text-[11px] text-slate-500">扫码关注</span>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-400">暂未配置二维码</div>
+              )}
+            </div>
           </div>
         </div>
 

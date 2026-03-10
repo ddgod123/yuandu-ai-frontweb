@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const menuItems = [
   { href: "/profile", label: "个人信息" },
+  { href: "/profile/subscription", label: "订阅管理" },
   { href: "/profile/favorites/collections", label: "收藏合集" },
   { href: "/profile/favorites/emojis", label: "收藏表情" },
 ];
@@ -42,4 +43,3 @@ export default function ProfileMenu() {
     </div>
   );
 }
-

@@ -4,13 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Heart, Loader2 } from "lucide-react";
+import { Heart, Loader2, Calendar, User, Hash, Download, ThumbsUp, Sparkles, FolderHeart, ChevronRight } from "lucide-react";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 import {
   API_BASE,
-  fetchWithAuth,
+  ensureAuthSession,
   fetchWithAuthRetry,
-  hasValidAccessToken,
 } from "@/lib/auth-client";
 const PAGE_SIZE = 12;
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -42,6 +41,35 @@ type ApiEmojiPreview = {
   preview_url?: string;
   file_url?: string;
 };
+
+type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+};
+
+async function parseApiError(res: Response) {
+  try {
+    const payload = (await res.clone().json()) as ApiErrorPayload;
+    return {
+      code: (payload?.error || "").trim(),
+      message: (payload?.message || "").trim(),
+    };
+  } catch {
+    return { code: "", message: "" };
+  }
+}
+
+function resolveCollectionFavoriteError(status: number, code: string, fallback: string) {
+  if (status === 403) {
+    if (code === "user_disabled") return "账号状态异常，暂时无法操作收藏";
+    if (code === "subscription_required") return "当前账号暂无收藏权限，请先开通订阅";
+    return "暂无权限，请稍后再试";
+  }
+  if (status === 404) return "目标合集不存在或已下架";
+  if (status === 429) return "操作过于频繁，请稍后重试";
+  if (status >= 500) return "服务繁忙，请稍后重试";
+  return fallback;
+}
 
 function isImageFile(url?: string | null) {
   if (!url) return false;
@@ -225,8 +253,8 @@ export default function FavoriteCollectionsPage() {
     router.push(`/login?next=${encodeURIComponent("/profile/favorites/collections")}`);
   };
 
-  const ensureAuthenticated = (message: string) => {
-    if (hasValidAccessToken()) return true;
+  const ensureAuthenticated = async (message: string) => {
+    if (await ensureAuthSession()) return true;
     openAuthPrompt(message);
     return false;
   };
@@ -251,7 +279,9 @@ export default function FavoriteCollectionsPage() {
           return;
         }
         if (!res.ok) {
-          throw new Error("failed to load");
+          const apiErr = await parseApiError(res);
+          setErrorMessage(apiErr.message || resolveCollectionFavoriteError(res.status, apiErr.code, "加载收藏合集失败，请稍后重试"));
+          return;
         }
         const data = (await res.json()) as FavoriteCollectionResponse;
         const nextItems = Array.isArray(data.items) ? data.items : [];
@@ -294,11 +324,11 @@ export default function FavoriteCollectionsPage() {
 
   const handleRemoveFavoriteCollection = async (collectionId: number) => {
     if (!collectionId || removingCollection === collectionId) return;
-    if (!ensureAuthenticated("请先登录再继续收藏")) return;
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
     setRemovingCollection(collectionId);
     setErrorMessage(null);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/collections/${collectionId}/favorite`, {
+      const res = await fetchWithAuthRetry(`${API_BASE}/collections/${collectionId}/favorite`, {
         method: "DELETE",
       });
       if (res.status === 401) {
@@ -306,7 +336,9 @@ export default function FavoriteCollectionsPage() {
         return;
       }
       if (!res.ok) {
-        throw new Error("failed remove");
+        const apiErr = await parseApiError(res);
+        setErrorMessage(apiErr.message || resolveCollectionFavoriteError(res.status, apiErr.code, "取消合集收藏失败，请稍后重试"));
+        return;
       }
       setItems((prev) => prev.filter((item) => item.collection_id !== collectionId));
       setTotal((prev) => Math.max(0, prev - 1));
@@ -318,7 +350,7 @@ export default function FavoriteCollectionsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-6xl space-y-8">
       <AuthPromptModal
         open={Boolean(authPromptMessage)}
         message={authPromptMessage || ""}
@@ -326,24 +358,41 @@ export default function FavoriteCollectionsPage() {
         onLogin={handleGoLogin}
       />
 
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-black text-slate-900">我的收藏 · 合集</h1>
-        <div className="text-xs font-semibold text-slate-400">共 {total} 个收藏合集</div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between px-2">
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-600 ring-1 ring-emerald-100">
+            <Sparkles size={12} className="animate-pulse" />
+            FAVORITE COLLECTIONS
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">我的收藏 · 合集</h1>
+        </div>
+        <div className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+          <FolderHeart size={16} />
+          共 {total} 个收藏合集
+        </div>
       </div>
 
       {errorMessage ? (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+        <div className="mx-2 flex items-center gap-3 rounded-2xl border border-rose-100 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-500 animate-in fade-in slide-in-from-top-2">
+          <div className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
           {errorMessage}
         </div>
       ) : null}
 
       {!loading && items.length === 0 ? (
-        <div className="rounded-3xl border border-slate-100 bg-white p-16 text-center text-sm font-semibold text-slate-400 shadow-sm">
-          你还没有收藏任何合集
+        <div className="flex flex-col items-center justify-center rounded-[3rem] border-2 border-dashed border-slate-100 bg-white py-24 text-center shadow-sm">
+          <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-50 text-slate-200">
+            <FolderHeart size={40} />
+          </div>
+          <h3 className="text-lg font-black text-slate-900">暂无收藏合集</h3>
+          <p className="mt-2 text-sm font-medium text-slate-400">去首页发现更多精彩的表情包合集吧</p>
+          <Link href="/" className="mt-8 rounded-2xl bg-slate-900 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 hover:-translate-y-0.5 active:translate-y-0">
+            立即去探索
+          </Link>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
         {items.map((record) => {
           const collection = record.collection;
           const author =
@@ -355,9 +404,9 @@ export default function FavoriteCollectionsPage() {
             <Link
               key={`${record.collection_id}-${record.created_at}`}
               href={`/collections/${collection.id}`}
-              className="group overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
+              className="group relative flex flex-col overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-emerald-100 hover:shadow-2xl hover:shadow-emerald-500/10"
             >
-              <div className="aspect-[4/3] overflow-hidden bg-slate-100">
+              <div className="relative aspect-[4/3] overflow-hidden bg-slate-50">
                 {collection.cover_url ? (
                   <FallbackImage
                     key={collection.cover_url}
@@ -365,12 +414,16 @@ export default function FavoriteCollectionsPage() {
                     alt={collection.title}
                   />
                 ) : (
-                  <div className="h-full w-full bg-slate-100" />
+                  <div className="flex h-full w-full items-center justify-center bg-slate-50 text-slate-200">
+                    <FolderHeart size={48} />
+                  </div>
                 )}
-              </div>
-              <div className="p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="line-clamp-1 text-base font-black text-slate-900">{collection.title}</h2>
+                
+                {/* 悬停时的渐变遮罩 */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                
+                {/* 收藏按钮 */}
+                <div className="absolute right-4 top-4 z-10">
                   <button
                     type="button"
                     onClick={(event) => {
@@ -379,35 +432,56 @@ export default function FavoriteCollectionsPage() {
                       handleRemoveFavoriteCollection(collection.id);
                     }}
                     disabled={removingCollection === collection.id}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-500 transition hover:bg-rose-100 disabled:opacity-60"
+                    className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/90 text-rose-500 shadow-lg backdrop-blur-md transition-all hover:scale-110 hover:bg-white active:scale-95 disabled:opacity-60"
                     aria-label="取消收藏"
                   >
                     {removingCollection === collection.id ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <Loader2 size={18} className="animate-spin" />
                     ) : (
-                      <Heart size={14} className="fill-current" />
+                      <Heart size={18} className="fill-current" />
                     )}
                   </button>
                 </div>
-                <div className="mt-1 text-xs font-semibold text-slate-500">创作者：{author}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-400">
-                  收藏于：{formatFavoriteDate(record.created_at)}
+              </div>
+
+              <div className="flex flex-1 flex-col p-6">
+                <div className="mb-4 space-y-1.5">
+                  <h2 className="line-clamp-1 text-lg font-black text-slate-900 transition-colors group-hover:text-emerald-600">{collection.title}</h2>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
+                      <User size={12} className="text-slate-300" />
+                      {author}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
+                      <Calendar size={12} className="text-slate-300" />
+                      {formatFavoriteDate(record.created_at)}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">数量</div>
+
+                <div className="mt-auto grid grid-cols-2 gap-4 rounded-[1.5rem] bg-slate-50/50 p-4 transition-colors group-hover:bg-emerald-50/50">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
+                      <Hash size={10} /> 数量
+                    </div>
                     <div className="text-sm font-black text-slate-900">{collection.file_count || 0}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">收藏</div>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
+                      <Heart size={10} /> 收藏
+                    </div>
                     <div className="text-sm font-black text-slate-900">{collection.favorite_count || 0}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">下载</div>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
+                      <Download size={10} /> 下载
+                    </div>
                     <div className="text-sm font-black text-slate-900">{collection.download_count || 0}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">点赞</div>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
+                      <ThumbsUp size={10} /> 点赞
+                    </div>
                     <div className="text-sm font-black text-slate-900">{collection.like_count || 0}</div>
                   </div>
                 </div>
@@ -418,14 +492,21 @@ export default function FavoriteCollectionsPage() {
       </div>
 
       {canLoadMore ? (
-        <div className="mt-8 flex justify-center">
+        <div className="mt-12 flex justify-center">
           <button
             type="button"
             onClick={() => setPage((prev) => prev + 1)}
             disabled={loading}
-            className="rounded-full border border-slate-200 bg-white px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="group flex h-12 items-center gap-2 rounded-2xl border-2 border-slate-100 bg-white px-8 text-sm font-black text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600 hover:shadow-lg hover:shadow-emerald-500/5 disabled:opacity-60"
           >
-            {loading ? "加载中..." : "加载更多"}
+            {loading ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <>
+                加载更多收藏
+                <ChevronRight size={18} className="transition-transform group-hover:translate-x-1" />
+              </>
+            )}
           </button>
         </div>
       ) : null}

@@ -4,13 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Check, Download, Heart, Loader2 } from "lucide-react";
+import { Check, Download, Heart, Loader2, Sparkles, FolderHeart, ChevronRight, FileType, HardDrive, ExternalLink } from "lucide-react";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 import {
   API_BASE,
-  fetchWithAuth,
+  ensureAuthSession,
   fetchWithAuthRetry,
-  hasValidAccessToken,
 } from "@/lib/auth-client";
 const PAGE_SIZE = 36;
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -34,6 +33,47 @@ type FavoriteEmojiResponse = {
   items?: FavoriteEmojiRecord[];
   total?: number;
 };
+
+type ApiErrorPayload = {
+  error?: string;
+  message?: string;
+};
+
+async function parseApiError(res: Response) {
+  try {
+    const payload = (await res.clone().json()) as ApiErrorPayload;
+    return {
+      code: (payload?.error || "").trim(),
+      message: (payload?.message || "").trim(),
+    };
+  } catch {
+    return { code: "", message: "" };
+  }
+}
+
+function resolveFavoriteEmojiError(status: number, code: string, fallback: string) {
+  if (status === 403) {
+    if (code === "user_disabled") return "账号状态异常，暂时无法操作";
+    if (code === "subscription_required") return "当前账号暂无该权限，请先开通订阅";
+    return "暂无权限，请稍后再试";
+  }
+  if (status === 404) return "目标表情不存在或已下架";
+  if (status === 429) return "操作过于频繁，请稍后重试";
+  if (status >= 500) return "服务繁忙，请稍后重试";
+  return fallback;
+}
+
+function resolveDownloadError(status: number, code: string, fallback: string) {
+  if (status === 403) {
+    if (code === "user_disabled") return "账号状态异常，暂时无法下载";
+    if (code === "subscription_required") return "下载需要订阅权限，请先开通订阅";
+    return "暂无下载权限";
+  }
+  if (status === 404) return "表情不存在或已下架";
+  if (status === 429) return "下载过于频繁，请稍后重试";
+  if (status >= 500) return "下载服务繁忙，请稍后重试";
+  return fallback;
+}
 
 function triggerURLDownload(url: string, filename?: string) {
   const link = document.createElement("a");
@@ -198,8 +238,8 @@ export default function FavoriteEmojisPage() {
     router.push(`/login?next=${encodeURIComponent("/profile/favorites/emojis")}`);
   };
 
-  const ensureAuthenticated = (message: string) => {
-    if (hasValidAccessToken()) return true;
+  const ensureAuthenticated = async (message: string) => {
+    if (await ensureAuthSession()) return true;
     openAuthPrompt(message);
     return false;
   };
@@ -223,7 +263,9 @@ export default function FavoriteEmojisPage() {
           return;
         }
         if (!res.ok) {
-          throw new Error("failed to load");
+          const apiErr = await parseApiError(res);
+          setErrorMessage(apiErr.message || resolveFavoriteEmojiError(res.status, apiErr.code, "加载收藏表情失败，请稍后重试"));
+          return;
         }
         const data = (await res.json()) as FavoriteEmojiResponse;
         const nextItems = Array.isArray(data.items) ? data.items : [];
@@ -246,17 +288,19 @@ export default function FavoriteEmojisPage() {
 
   const handleDownloadEmoji = async (emojiId: number) => {
     if (!emojiId || downloadingEmoji) return;
-    if (!ensureAuthenticated("请先登录再继续下载")) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
     setDownloadingEmoji(emojiId);
     setErrorMessage(null);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/emojis/${emojiId}/download-file`);
+      const res = await fetchWithAuthRetry(`${API_BASE}/emojis/${emojiId}/download-file`);
       if (res.status === 401) {
         openAuthPrompt("请先登录再继续下载");
         return;
       }
       if (!res.ok) {
-        throw new Error("failed download");
+        const apiErr = await parseApiError(res);
+        setErrorMessage(apiErr.message || resolveDownloadError(res.status, apiErr.code, "下载失败，请稍后重试"));
+        return;
       }
       const blob = await res.blob();
       const fileName = parseDownloadFileName(
@@ -281,11 +325,11 @@ export default function FavoriteEmojisPage() {
 
   const handleRemoveFavorite = async (emojiId: number) => {
     if (!emojiId || removingEmoji === emojiId) return;
-    if (!ensureAuthenticated("请先登录再继续收藏")) return;
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
     setRemovingEmoji(emojiId);
     setErrorMessage(null);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/favorites/${emojiId}`, {
+      const res = await fetchWithAuthRetry(`${API_BASE}/favorites/${emojiId}`, {
         method: "DELETE",
       });
       if (res.status === 401) {
@@ -293,7 +337,9 @@ export default function FavoriteEmojisPage() {
         return;
       }
       if (!res.ok) {
-        throw new Error("failed remove");
+        const apiErr = await parseApiError(res);
+        setErrorMessage(apiErr.message || resolveFavoriteEmojiError(res.status, apiErr.code, "取消收藏失败，请稍后重试"));
+        return;
       }
       setItems((prev) => prev.filter((item) => item.emoji_id !== emojiId));
       setTotal((prev) => Math.max(0, prev - 1));
@@ -307,7 +353,7 @@ export default function FavoriteEmojisPage() {
   const canLoadMore = items.length < total;
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-6xl space-y-8">
       <AuthPromptModal
         open={Boolean(authPromptMessage)}
         message={authPromptMessage || ""}
@@ -315,24 +361,41 @@ export default function FavoriteEmojisPage() {
         onLogin={handleGoLogin}
       />
 
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-black text-slate-900">我的收藏 · 表情</h1>
-        <div className="text-xs font-semibold text-slate-400">共 {total} 张收藏表情</div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between px-2">
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-600 ring-1 ring-emerald-100">
+            <Sparkles size={12} className="animate-pulse" />
+            FAVORITE EMOJIS
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">我的收藏 · 表情</h1>
+        </div>
+        <div className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-400 ring-1 ring-slate-100">
+          <Heart size={16} className="text-rose-500" />
+          共 {total} 张收藏表情
+        </div>
       </div>
 
       {errorMessage ? (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+        <div className="mx-2 flex items-center gap-3 rounded-2xl border border-rose-100 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-500 animate-in fade-in slide-in-from-top-2">
+          <div className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
           {errorMessage}
         </div>
       ) : null}
 
       {!loading && items.length === 0 ? (
-        <div className="rounded-3xl border border-slate-100 bg-white p-16 text-center text-sm font-semibold text-slate-400 shadow-sm">
-          你还没有收藏任何单张表情
+        <div className="flex flex-col items-center justify-center rounded-[3rem] border-2 border-dashed border-slate-100 bg-white py-24 text-center shadow-sm">
+          <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-50 text-slate-200">
+            <Heart size={40} />
+          </div>
+          <h3 className="text-lg font-black text-slate-900">暂无收藏表情</h3>
+          <p className="mt-2 text-sm font-medium text-slate-400">去首页发现更多有趣的表情吧</p>
+          <Link href="/" className="mt-8 rounded-2xl bg-slate-900 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 hover:-translate-y-0.5 active:translate-y-0">
+            立即去探索
+          </Link>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {items.map((record) => {
           const emoji = record.emoji;
           const preview = emoji.preview_url || emoji.file_url || "";
@@ -340,23 +403,30 @@ export default function FavoriteEmojisPage() {
           return (
             <div
               key={`${record.emoji_id}-${record.created_at}`}
-              className="group rounded-2xl border border-slate-100 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+              className="group relative flex flex-col overflow-hidden rounded-[2rem] border border-slate-100 bg-white p-3 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-emerald-100 hover:shadow-2xl hover:shadow-emerald-500/10"
             >
-              <div className="relative aspect-square overflow-hidden rounded-xl bg-slate-50">
-                {preview ? <FallbackImage url={preview} alt={emoji.title || `emoji-${emoji.id}`} /> : null}
-                <div className="absolute left-2 top-2 rounded-full bg-slate-900/80 px-2 py-1 text-[10px] font-black text-white">
+              <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-50">
+                {preview ? (
+                  <FallbackImage url={preview} alt={emoji.title || `emoji-${emoji.id}`} />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-slate-200">
+                    <FolderHeart size={32} />
+                  </div>
+                )}
+                
+                {/* 格式标签 */}
+                <div className="absolute left-2 top-2 flex items-center gap-1 rounded-lg bg-slate-900/80 px-2 py-1 text-[9px] font-black text-white backdrop-blur-md">
+                  <FileType size={10} />
                   {formatLabel}
                 </div>
-              </div>
-              <div className="mt-3 space-y-2">
-                <div className="text-[11px] font-semibold text-slate-400">{getEmojiSizeLabel(emoji.size_bytes)}</div>
-                <div className="flex items-center justify-between gap-2">
+
+                {/* 取消收藏按钮 */}
+                <div className="absolute right-2 top-2 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
                   <button
                     type="button"
                     onClick={() => handleRemoveFavorite(emoji.id)}
                     disabled={removingEmoji === emoji.id}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-500 transition hover:bg-rose-100 disabled:opacity-60"
-                    aria-label="取消收藏"
+                    className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/90 text-rose-500 shadow-lg backdrop-blur-md transition-all hover:scale-110 hover:bg-white active:scale-95 disabled:opacity-60"
                   >
                     {removingEmoji === emoji.id ? (
                       <Loader2 size={14} className="animate-spin" />
@@ -364,34 +434,52 @@ export default function FavoriteEmojisPage() {
                       <Heart size={14} className="fill-current" />
                     )}
                   </button>
+                </div>
+
+                {/* 悬停时的渐变遮罩 */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+              </div>
+
+              <div className="mt-4 flex flex-1 flex-col space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400">
+                    <HardDrive size={10} className="text-slate-300" />
+                    {getEmojiSizeLabel(emoji.size_bytes)}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => handleDownloadEmoji(emoji.id)}
-                    className="flex items-center gap-1 rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-600 transition-colors disabled:opacity-60"
+                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2 text-[11px] font-black transition-all ${
+                      downloadedEmoji === emoji.id
+                        ? "bg-emerald-50 text-emerald-600"
+                        : "bg-slate-50 text-slate-500 hover:bg-slate-900 hover:text-white hover:shadow-lg hover:shadow-slate-200"
+                    } disabled:opacity-60`}
                     disabled={downloadingEmoji === emoji.id}
                   >
                     {downloadingEmoji === emoji.id ? (
-                      <>
-                        <Loader2 size={12} className="animate-spin" />
-                        下载中
-                      </>
+                      <Loader2 size={14} className="animate-spin" />
                     ) : downloadedEmoji === emoji.id ? (
                       <>
-                        <Check size={12} />
+                        <Check size={14} />
                         已下载
                       </>
                     ) : (
                       <>
-                        <Download size={12} />
+                        <Download size={14} />
                         下载
                       </>
                     )}
                   </button>
                 </div>
+
                 <Link
                   href={`/collections/${emoji.collection_id}`}
-                  className="block rounded-lg border border-slate-200 px-2 py-1 text-center text-[11px] font-bold text-slate-600 hover:bg-slate-50"
+                  className="flex items-center justify-center gap-1 rounded-xl border border-slate-100 bg-slate-50/50 py-2 text-[10px] font-bold text-slate-500 transition-all hover:bg-white hover:border-emerald-100 hover:text-emerald-600"
                 >
+                  <ExternalLink size={10} />
                   查看合集
                 </Link>
               </div>
@@ -401,14 +489,21 @@ export default function FavoriteEmojisPage() {
       </div>
 
       {canLoadMore ? (
-        <div className="mt-8 flex justify-center">
+        <div className="mt-12 flex justify-center">
           <button
             type="button"
             onClick={() => setPage((prev) => prev + 1)}
             disabled={loading}
-            className="rounded-full border border-slate-200 bg-white px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="group flex h-12 items-center gap-2 rounded-2xl border-2 border-slate-100 bg-white px-8 text-sm font-black text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600 hover:shadow-lg hover:shadow-emerald-500/5 disabled:opacity-60"
           >
-            {loading ? "加载中..." : "加载更多"}
+            {loading ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <>
+                加载更多表情
+                <ChevronRight size={18} className="transition-transform group-hover:translate-x-1" />
+              </>
+            )}
           </button>
         </div>
       ) : null}

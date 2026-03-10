@@ -1,11 +1,14 @@
 import Link from "next/link";
+import { ChevronRight, Image as ImageIcon } from "lucide-react";
 import LatestGrid from "@/components/home/LatestGrid";
+import FeaturedCollections from "@/components/home/FeaturedCollections";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 
 type CollectionBrief = {
   id: number;
   title: string;
+  cover_key?: string;
   cover_url?: string;
   file_count?: number;
   creator_name?: string;
@@ -21,6 +24,15 @@ type HomeStats = {
   total_collections?: number;
   total_emojis?: number;
   today_new_emojis?: number;
+};
+
+type BatchObjectURLItem = {
+  key?: string;
+  url?: string;
+};
+
+type BatchObjectURLResponse = {
+  items?: BatchObjectURLItem[];
 };
 
 async function fetchHomeStats(): Promise<HomeStats | null> {
@@ -76,22 +88,33 @@ async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
   }
 }
 
-async function resolveCoverUrl(key?: string): Promise<string> {
-  if (!key) return "";
-  const trimmed = key.trim();
-  if (!trimmed) return "";
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+async function fetchSignedCoverMap(keys: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const deduped = Array.from(new Set(keys.map((key) => key.trim()).filter(Boolean)));
+  if (!deduped.length) return map;
   try {
     const res = await fetch(
-      `${API_BASE}/storage/url?key=${encodeURIComponent(trimmed)}`,
-      { next: { revalidate: 300 } }
+      `${API_BASE}/storage/urls`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: deduped }),
+      }
     );
-    if (!res.ok) return "";
-    const data = (await res.json()) as { url?: string };
-    return data.url || "";
+    if (!res.ok) return map;
+    const data = (await res.json()) as BatchObjectURLResponse;
+    (data.items || []).forEach((item) => {
+      const key = (item.key || "").trim();
+      const url = (item.url || "").trim();
+      if (key && url) {
+        map.set(key, url);
+      }
+    });
   } catch {
-    return "";
+    return map;
   }
+  return map;
 }
 
 export default async function Page() {
@@ -110,129 +133,121 @@ export default async function Page() {
       : "--";
   const latestCollections = await fetchLatestCollections(12);
   const featuredCollections = await fetchFeaturedCollections(4);
+  const coverKeys = [
+    ...latestCollections.map((item) => item.cover_key || ""),
+    ...featuredCollections.map((item) => item.cover_key || ""),
+  ];
+  const signedCoverMap = await fetchSignedCoverMap(coverKeys);
+
+  const pickCover = (item: CollectionBrief) => {
+    const key = (item.cover_key || "").trim();
+    if (key && signedCoverMap.has(key)) {
+      return signedCoverMap.get(key) || "";
+    }
+    return (item.cover_url || "").trim();
+  };
+
   const latestWithCovers = await Promise.all(
     latestCollections.map(async (item) => ({
       ...item,
-      cover: await resolveCoverUrl(item.cover_url),
+      coverKey: item.cover_key || "",
+      cover: pickCover(item),
     }))
   );
   const featuredWithCovers = await Promise.all(
     featuredCollections.map(async (item) => ({
       ...item,
-      cover: await resolveCoverUrl(item.cover_url),
+      cover: pickCover(item),
       author: item.creator_name || item.creator_name_zh || item.creator_name_en || "官方推荐",
     }))
   );
   const fallbackCover = "https://api.dicebear.com/7.x/bottts/svg?seed=placeholder";
-  const featuredCardFallbacks = [
-    "from-cyan-100 via-sky-100 to-blue-100",
-    "from-amber-100 via-orange-100 to-rose-100",
-    "from-emerald-100 via-teal-100 to-cyan-100",
-    "from-violet-100 via-fuchsia-100 to-pink-100",
-  ];
 
   return (
-    <main className="min-h-screen">
+    <main className="min-h-screen bg-white">
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-white py-24">
-        <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/4 h-96 w-96 rounded-full bg-emerald-50 blur-3xl" />
-        <div className="absolute bottom-0 left-0 translate-y-1/2 -translate-x-1/4 h-96 w-96 rounded-full bg-blue-50 blur-3xl" />
+      <section className="relative overflow-hidden bg-white pb-20 pt-24 lg:pb-32 lg:pt-36">
+        {/* 增强背景装饰 */}
+        <div className="absolute right-0 top-0 -translate-y-1/2 translate-x-1/4 h-[600px] w-[600px] rounded-full bg-emerald-50/40 blur-[120px]" />
+        <div className="absolute bottom-0 left-0 translate-y-1/2 -translate-x-1/4 h-[600px] w-[600px] rounded-full bg-blue-50/40 blur-[120px]" />
         
         <div className="relative mx-auto max-w-7xl px-6 text-center">
-          <div className="mx-auto mb-8 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-600 ring-1 ring-emerald-100">
-            <span className="relative flex h-2 w-2">
+          <div className="mx-auto mb-10 inline-flex items-center gap-3 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-emerald-600 shadow-xl shadow-emerald-500/5 ring-1 ring-emerald-100/50 transition-transform hover:scale-105">
+            <span className="relative flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
             </span>
-            今日已新增 {todayText} 个表情
+            今日已新增 <span className="text-emerald-700">{todayText}</span> 个表情
           </div>
-          <h1 className="text-5xl font-black tracking-tight text-slate-900 md:text-7xl">
+          
+          <h1 className="text-6xl font-black tracking-tighter text-slate-900 md:text-8xl lg:text-9xl">
             表情包<span className="text-emerald-500">档案馆</span>
           </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-lg font-medium leading-relaxed text-slate-500 md:text-xl">
-            在这里，我们用像素记录情绪。已收录 {totalCollectionsText} 个合集、{totalEmojisText} 张表情。
+          
+          <p className="mx-auto mt-8 max-w-3xl text-lg font-medium leading-relaxed text-slate-500 md:text-2xl">
+            在这里，我们用表情包记录情绪。已收录 <span className="font-bold text-slate-900">{totalCollectionsText}</span> 个合集、<span className="font-bold text-slate-900">{totalEmojisText}</span> 张表情。
           </p>
-          <div className="mt-10 flex flex-wrap justify-center gap-4">
-            <Link href="/categories" className="rounded-2xl bg-slate-900 px-8 py-4 text-base font-bold text-white shadow-xl shadow-slate-200 transition-all hover:bg-slate-800 hover:-translate-y-1 active:translate-y-0">
-              浏览分类
+          
+          <div className="mt-12 flex flex-wrap justify-center gap-6">
+            <Link href="/categories" className="group relative flex h-16 items-center justify-center overflow-hidden rounded-[2rem] bg-slate-900 px-10 text-lg font-bold text-white shadow-2xl shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 hover:-translate-y-1 active:translate-y-0">
+              <span className="relative z-10">立即开启浏览</span>
+              <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-transform duration-500 group-hover:translate-x-0" />
             </Link>
           </div>
         </div>
       </section>
 
       {/* Featured Collections */}
-      <section className="py-20">
+      <section className="py-24 lg:py-32">
         <div className="mx-auto max-w-7xl px-6">
-          <div className="mb-12 flex items-end justify-between">
-            <div>
-              <h2 className="text-3xl font-black tracking-tight text-slate-900">推荐合集</h2>
-              <p className="mt-2 text-sm font-medium text-slate-500">来自后台勾选“推荐”的合集，首页固定展示最多 4 个。</p>
+          <div className="mb-16 flex flex-col items-center text-center md:flex-row md:items-end md:justify-between md:text-left">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-emerald-500">
+                <div className="h-1 w-8 rounded-full bg-emerald-500" />
+                Featured
+              </div>
+              <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">推荐合集</h2>
+              <p className="max-w-md text-base font-medium text-slate-400">来自后台勾选“推荐”的合集，首页固定展示最多 4 个。</p>
             </div>
-            <Link href="/categories" className="text-sm font-bold text-emerald-600 hover:underline">查看全部</Link>
+            <Link href="/categories" className="mt-6 flex items-center gap-2 text-sm font-bold text-emerald-600 hover:underline md:mt-0 group">
+              查看全部 <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
+            </Link>
           </div>
 
           {featuredWithCovers.length > 0 ? (
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {featuredWithCovers.map((item, index) => (
-                <Link
-                  href={`/collections/${item.id}`}
-                  key={item.id}
-                  className="group overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl"
-                >
-                  <div className="relative h-40 overflow-hidden">
-                    {item.cover ? (
-                      <div
-                        className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
-                        style={{ backgroundImage: `url("${item.cover}")` }}
-                      />
-                    ) : (
-                      <div
-                        className={`absolute inset-0 bg-gradient-to-br ${featuredCardFallbacks[index % featuredCardFallbacks.length]}`}
-                      />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/35 via-slate-900/5 to-transparent" />
-                    <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-black tracking-wide text-slate-800">
-                      推荐
-                    </span>
-                  </div>
-
-                  <div className="p-4">
-                    <h3 className="min-h-[3rem] overflow-hidden text-lg font-black leading-6 text-slate-900">
-                      {item.title}
-                    </h3>
-                    <p className="mt-1 text-xs font-bold text-slate-400">by {item.author}</p>
-                    <div className="mt-3 flex items-center justify-between text-xs font-bold text-slate-500">
-                      <span>{(item.file_count || 0).toLocaleString()} 张</span>
-                      <span>赞 {(item.like_count || 0).toLocaleString()}</span>
-                      <span>藏 {(item.favorite_count || 0).toLocaleString()}</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            <FeaturedCollections items={featuredWithCovers} />
           ) : (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
-              <p className="text-sm font-semibold text-slate-500">当前还没有被标记为推荐的合集</p>
-              <p className="mt-1 text-xs font-medium text-slate-400">可在管理后台编辑合集时勾选“推荐”</p>
+            <div className="rounded-[3rem] border-2 border-dashed border-slate-100 bg-slate-50/50 px-6 py-20 text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm">
+                <ImageIcon size={32} />
+              </div>
+              <p className="text-lg font-bold text-slate-400">当前还没有被标记为推荐的合集</p>
+              <p className="mt-2 text-sm font-medium text-slate-400">可在管理后台编辑合集时勾选“推荐”</p>
             </div>
           )}
         </div>
       </section>
 
-      {/* Latest Emojis Masonry-ish Grid */}
-      <section className="bg-slate-100/50 py-24">
+      {/* Latest Emojis */}
+      <section className="relative overflow-hidden bg-slate-50/50 py-24 lg:py-32">
+        <div className="absolute left-0 top-0 h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
+        
         <div className="mx-auto max-w-7xl px-6">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-black tracking-tight text-slate-900">新到馆表情</h2>
-            <p className="mt-2 text-sm font-medium text-slate-500">刚刚入库的精彩内容，抢先一睹为快。</p>
+          <div className="mb-16 text-center space-y-4">
+            <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-blue-500">
+              <div className="h-1 w-8 rounded-full bg-blue-500" />
+              New Arrival
+            </div>
+            <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">新到馆表情</h2>
+            <p className="mx-auto max-w-2xl text-base font-medium text-slate-400">刚刚入库的精彩内容，抢先一睹为快。</p>
           </div>
 
           <LatestGrid items={latestWithCovers} fallbackCover={fallbackCover} />
           
-          <div className="mt-16 text-center">
+          <div className="mt-20 text-center">
             <Link
               href="/categories"
-              className="rounded-2xl bg-white px-10 py-4 text-sm font-bold text-slate-900 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 hover:shadow-md"
+              className="inline-flex h-14 items-center justify-center rounded-2xl bg-white px-10 text-sm font-bold text-slate-900 shadow-sm ring-1 ring-slate-200 transition-all hover:bg-slate-50 hover:shadow-md hover:-translate-y-0.5"
             >
               浏览更多合集
             </Link>
@@ -241,23 +256,25 @@ export default async function Page() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-24">
-        <div className="mx-auto max-w-5xl px-6">
-          <div className="relative overflow-hidden rounded-[3rem] bg-slate-900 px-8 py-20 text-center text-white shadow-2xl">
-            <div className="absolute left-0 top-0 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/20 blur-3xl" />
-            <div className="absolute right-0 bottom-0 h-64 w-64 translate-x-1/2 translate-y-1/2 rounded-full bg-blue-500/20 blur-3xl" />
+      <section className="py-24 lg:py-40">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="relative overflow-hidden rounded-[4rem] bg-slate-900 px-8 py-24 text-center text-white shadow-[0_40px_100px_-20px_rgba(15,23,42,0.3)]">
+            <div className="absolute left-0 top-0 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/20 blur-[100px]" />
+            <div className="absolute right-0 bottom-0 h-[500px] w-[500px] translate-x-1/2 translate-y-1/2 rounded-full bg-blue-500/20 blur-[100px]" />
             
-            <h2 className="relative text-4xl font-black tracking-tight md:text-5xl">加入档案馆，成为档案官</h2>
-            <p className="relative mt-6 text-lg font-medium text-slate-400">
-              分享你收藏已久的私藏表情包，让全世界看到你的幽默感。
-            </p>
-            <div className="relative mt-10 flex justify-center gap-4">
-              <Link
-                href="/join"
-                className="rounded-2xl bg-emerald-500 px-8 py-4 text-base font-bold text-white transition-all hover:bg-emerald-400 hover:scale-105 active:scale-95"
-              >
-                立即加入
-              </Link>
+            <div className="relative z-10 space-y-8">
+              <h2 className="text-5xl font-black tracking-tight md:text-7xl">加入档案馆，<br /><span className="text-emerald-400">成为档案官</span></h2>
+              <p className="mx-auto max-w-2xl text-lg font-medium text-slate-400 md:text-xl">
+                分享你收藏已久的私藏表情包，让全世界看到你的幽默感。
+              </p>
+              <div className="flex justify-center pt-4">
+                <Link
+                  href="/join"
+                  className="group relative flex h-16 items-center justify-center overflow-hidden rounded-2xl bg-emerald-500 px-12 text-lg font-bold text-white transition-all hover:bg-emerald-400 hover:scale-105 active:scale-95 shadow-xl shadow-emerald-500/20"
+                >
+                  立即加入
+                </Link>
+              </div>
             </div>
           </div>
         </div>
