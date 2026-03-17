@@ -4,8 +4,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Share2, Info, Bookmark, ChevronDown } from "lucide-react";
+import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Info, Bookmark, ChevronDown } from "lucide-react";
 import { API_BASE, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
+import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 const PAGE_SIZE = 60;
 
@@ -56,6 +57,26 @@ function isImageFile(url?: string | null) {
   return IMAGE_EXT_REGEX.test(clean);
 }
 
+function extractObjectKey(rawUrl: string) {
+  const trimmed = (rawUrl || "").trim();
+  if (!trimmed) return "";
+  try {
+    if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("//")) {
+      const parsed = new URL(trimmed.startsWith("//") ? `https:${trimmed}` : trimmed);
+      return decodeURIComponent(parsed.pathname || "").replace(/^\/+/, "");
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return trimmed.replace(/^\/+/, "").split("?")[0].split("#")[0];
+}
+
+function buildStorageProxyCandidate(rawUrl: string) {
+  const key = extractObjectKey(rawUrl);
+  if (!key || !key.startsWith("emoji/")) return "";
+  return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
+}
+
 function triggerBlobDownload(blob: Blob, filename: string) {
   const objectURL = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -65,23 +86,6 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   link.click();
   link.remove();
   window.URL.revokeObjectURL(objectURL);
-}
-
-function parseDownloadFileName(contentDisposition: string | null, fallback: string) {
-  if (!contentDisposition) return fallback;
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]).trim() || fallback;
-    } catch {
-      return fallback;
-    }
-  }
-  const plainMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-  if (plainMatch?.[1]) {
-    return plainMatch[1].trim() || fallback;
-  }
-  return fallback;
 }
 
 function buildCollectionZipName(title?: string | null, collectionId?: number) {
@@ -135,16 +139,22 @@ function resolveDownloadNotice(status: number, code: string, fallback: string, t
 function buildImageCandidates(rawUrl: string): string[] {
   const trimmed = rawUrl.trim();
   if (!trimmed) return [];
-
-  // 非图片后缀直接跳过，避免 .ds_store、txt 等导致 404
-  if (!isImageFile(trimmed)) return [];
+  const proxyCandidate = buildStorageProxyCandidate(trimmed);
+  // 非图片后缀直接跳过，避免 .ds_store、txt 等导致 404；但允许 proxy 兜底
+  if (!isImageFile(trimmed) && !proxyCandidate) return [];
 
   const candidates: string[] = [];
+  const isProxyURL = (value: string) => value.includes("/api/storage/proxy?");
   const add = (value: string) => {
-    if (value && isImageFile(value) && !candidates.includes(value)) {
+    if (!value) return;
+    if (!isProxyURL(value) && !isImageFile(value)) return;
+    if (!candidates.includes(value)) {
       candidates.push(value);
     }
   };
+
+  // 开发阶段默认优先走后端 storage proxy，避免依赖未备案/冻结域名。
+  add(proxyCandidate);
 
   const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
   const preferHttps = protocol === "https:";
@@ -159,6 +169,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -172,6 +183,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -182,6 +194,7 @@ function buildImageCandidates(rawUrl: string): string[] {
     } else {
       add(trimmed);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -194,10 +207,12 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(`http://${trimmed}`);
       add(`https://${trimmed}`);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
   add(trimmed);
+  add(proxyCandidate);
   return candidates;
 }
 
@@ -403,33 +418,23 @@ export default function CollectionDetailPage() {
       if (zipKey) {
         params.set("zip_key", zipKey);
       }
-      const url = params.toString()
+      const endpoint = params.toString()
         ? `${API_BASE}/collections/${collectionId}/download-zip?${params.toString()}`
         : `${API_BASE}/collections/${collectionId}/download-zip`;
-      const res = await fetchWithAuthRetry(url);
-      if (res.status === 401) {
-        openAuthPrompt("请先登录再继续下载");
-        return;
-      }
-      if (res.status === 403) {
-        const apiErr = await parseApiError(res);
+      const result = await requestDownloadLink(endpoint);
+      if (!result.ok) {
+        if (result.error.status === 401) {
+          openAuthPrompt("请先登录再继续下载");
+          return;
+        }
         setNotice(
-          apiErr.message ||
-            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载合集")
+          result.error.message ||
+            resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载合集")
         );
         return;
       }
-      if (!res.ok) {
-        setNotice("下载失败，请稍后重试");
-        return;
-      }
-      const data = (await res.json()) as { url?: string };
-      if (data?.url) {
-        window.open(data.url, "_blank");
-        bumpCollectionDownloadCount();
-      } else {
-        setNotice("下载链接不可用");
-      }
+      triggerURLDownload(result.data.url, result.data.name || buildCollectionZipName(collection?.title, collectionId));
+      bumpCollectionDownloadCount();
     } catch {
       setNotice("下载失败，请稍后重试");
     } finally {
@@ -490,29 +495,19 @@ export default function CollectionDetailPage() {
     setNotice(null);
     setDownloadingEmoji(emojiId);
     try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/emojis/${emojiId}/download-file`);
-      if (res.status === 401) {
-        openAuthPrompt("请先登录再继续下载");
-        return;
-      }
-      if (res.status === 403) {
-        const apiErr = await parseApiError(res);
+      const result = await requestDownloadLink(`${API_BASE}/emojis/${emojiId}/download`);
+      if (!result.ok) {
+        if (result.error.status === 401) {
+          openAuthPrompt("请先登录再继续下载");
+          return;
+        }
         setNotice(
-          apiErr.message ||
-            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载表情")
+          result.error.message ||
+            resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载表情")
         );
         return;
       }
-      if (!res.ok) {
-        setNotice("下载失败，请稍后重试");
-        return;
-      }
-      const blob = await res.blob();
-      const fileName = parseDownloadFileName(
-        res.headers.get("Content-Disposition"),
-        `emoji-${emojiId}`
-      );
-      triggerBlobDownload(blob, fileName);
+      triggerURLDownload(result.data.url, result.data.name || `emoji-${emojiId}`);
       setDownloadedEmoji(emojiId);
       window.setTimeout(() => {
         setDownloadedEmoji((prev) => (prev === emojiId ? null : prev));

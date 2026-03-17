@@ -10,7 +10,7 @@ import {
   getStoredUser,
 } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
-import { User as UserIcon, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 
 type UserInfo = {
   name: string;
@@ -91,8 +91,12 @@ export default function Navbar() {
               { label: "首页", href: "/" },
               { label: "表情包大全", href: "/categories" },
               { label: "表情包IP", href: "/trending" },
+              { label: "创作表情包", href: "/create" },
+              { label: "我的", href: "/mine" },
             ].map((item) => {
-              const isActive = pathname === item.href;
+              const isActive =
+                pathname === item.href ||
+                (item.href !== "/" && pathname.startsWith(`${item.href}/`));
               return (
                 <Link
                   key={item.label}

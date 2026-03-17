@@ -24,6 +24,7 @@ type CollectionPreviewGridProps = {
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 
 function isImageFile(url?: string | null) {
   if (!url) return false;
@@ -31,20 +32,48 @@ function isImageFile(url?: string | null) {
   return IMAGE_EXT_REGEX.test(clean);
 }
 
+function extractObjectKey(rawUrl: string) {
+  const trimmed = (rawUrl || "").trim();
+  if (!trimmed) return "";
+  try {
+    if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("//")) {
+      const parsed = new URL(trimmed.startsWith("//") ? `https:${trimmed}` : trimmed);
+      const key = decodeURIComponent(parsed.pathname || "").replace(/^\/+/, "");
+      return key;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return trimmed.replace(/^\/+/, "").split("?")[0].split("#")[0];
+}
+
+function buildStorageProxyCandidate(rawUrl: string) {
+  const key = extractObjectKey(rawUrl);
+  if (!key || !key.startsWith("emoji/")) return "";
+  return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
+}
+
 const DEFAULT_PREVIEW_GRID_SIZE = 15;
 
 function buildImageCandidates(rawUrl: string): string[] {
   const trimmed = rawUrl.trim();
   if (!trimmed) return [];
-  // 非图片后缀直接跳过，避免 .ds_store 之类的无效对象
-  if (!isImageFile(trimmed)) return [];
+  const proxyCandidate = buildStorageProxyCandidate(trimmed);
+  // 非图片后缀直接跳过，避免 .ds_store 之类的无效对象；但允许 storage proxy 兜底地址
+  if (!isImageFile(trimmed) && !proxyCandidate) return [];
 
   const candidates: string[] = [];
+  const isProxyURL = (value: string) => value.includes("/api/storage/proxy?");
   const add = (value: string) => {
-    if (value && isImageFile(value) && !candidates.includes(value)) {
+    if (!value) return;
+    if (!isProxyURL(value) && !isImageFile(value)) return;
+    if (!candidates.includes(value)) {
       candidates.push(value);
     }
   };
+
+  // 开发阶段默认优先走后端 storage proxy，避免依赖未备案/冻结域名。
+  add(proxyCandidate);
 
   const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
   const preferHttps = protocol === "https:";
@@ -59,6 +88,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -72,6 +102,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -82,6 +113,7 @@ function buildImageCandidates(rawUrl: string): string[] {
     } else {
       add(trimmed);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
@@ -94,10 +126,12 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(`http://${trimmed}`);
       add(`https://${trimmed}`);
     }
+    add(proxyCandidate);
     return candidates;
   }
 
   add(trimmed);
+  add(proxyCandidate);
   return candidates;
 }
 

@@ -4,18 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const menuItems = [
-  { href: "/profile", label: "个人信息" },
-  { href: "/profile/subscription", label: "订阅管理" },
+  { href: "/mine/works", label: "我的作品" },
+  { href: "/mine/favorites/collections", label: "收藏合集" },
+  { href: "/mine/favorites/emojis", label: "收藏表情包" },
 ];
 
 function isActive(pathname: string, href: string) {
-  if (href === "/profile") {
-    return pathname === "/profile";
-  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function ProfileMenu() {
+export default function MineMenu() {
   const pathname = usePathname();
 
   return (

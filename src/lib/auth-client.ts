@@ -174,11 +174,13 @@ function withAuthHeaders(headers?: HeadersInit) {
 }
 
 let refreshingPromise: Promise<boolean> | null = null;
+type RefreshOutcome = "ok" | "invalid" | "transient";
+let refreshingOutcomePromise: Promise<RefreshOutcome> | null = null;
 
-export async function refreshAuthSession() {
-  if (refreshingPromise) return refreshingPromise;
+async function refreshAuthSessionOutcome(): Promise<RefreshOutcome> {
+  if (refreshingOutcomePromise) return refreshingOutcomePromise;
 
-  refreshingPromise = (async () => {
+  refreshingOutcomePromise = (async () => {
     try {
       const refreshToken = getRefreshToken();
       const headers = withAuthHeaders({ "Content-Type": "application/json" });
@@ -188,32 +190,51 @@ export async function refreshAuthSession() {
         headers,
         body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403 || res.status === 400) {
+          return "invalid";
+        }
+        return "transient";
+      }
+
       const data = (await res.json()) as AuthSessionPayload;
       if (data?.tokens?.access_token) {
         saveAuthSession(data);
-        return true;
+        return "ok";
       }
-      return hasValidAccessToken();
+      return hasValidAccessToken() ? "ok" : "invalid";
     } catch {
-      return false;
+      return "transient";
     } finally {
-      refreshingPromise = null;
+      refreshingOutcomePromise = null;
     }
   })();
 
-  return refreshingPromise;
+  return refreshingOutcomePromise;
+}
+
+export async function refreshAuthSession() {
+  if (refreshingPromise) return refreshingPromise;
+  refreshingPromise = (async () => (await refreshAuthSessionOutcome()) === "ok")();
+  try {
+    return await refreshingPromise;
+  } finally {
+    refreshingPromise = null;
+  }
 }
 
 export async function ensureAuthSession() {
   if (hasValidAccessToken()) return true;
   if (!hasRefreshToken()) return false;
-  const refreshed = await refreshAuthSession();
-  if (!refreshed) {
+  const outcome = await refreshAuthSessionOutcome();
+  if (outcome === "ok") {
+    return true;
+  }
+  if (outcome === "invalid") {
     clearAuthSession();
     return false;
   }
-  return true;
+  return hasValidAccessToken();
 }
 
 export async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}) {
@@ -228,9 +249,11 @@ export async function fetchWithAuthRetry(input: RequestInfo | URL, init: Request
   const res = await fetchWithAuth(input, init);
   if (res.status !== 401) return res;
 
-  const refreshed = await refreshAuthSession();
-  if (!refreshed) {
-    clearAuthSession();
+  const outcome = await refreshAuthSessionOutcome();
+  if (outcome !== "ok") {
+    if (outcome === "invalid") {
+      clearAuthSession();
+    }
     return res;
   }
 
