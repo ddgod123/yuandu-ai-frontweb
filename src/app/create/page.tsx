@@ -86,6 +86,18 @@ type SourceVideoProbeResponse = {
   orientation?: string;
 };
 
+type SourceURLProbeResponse = {
+  source_url?: string;
+  normalized_url?: string;
+  provider?: string;
+  provider_label?: string;
+  source_type?: string;
+  mock_only?: boolean;
+  supported?: boolean;
+  needs_ingestion?: boolean;
+  message?: string;
+};
+
 type UploadVideoInsight = {
   source_video_key?: string;
   file_name?: string;
@@ -100,6 +112,8 @@ type UploadVideoInsight = {
   orientation?: string;
   source?: "local" | "server";
 };
+
+type SourceInputMode = "local_upload" | "external_url_mock";
 
 type QualityTemplateSuggestion = {
   applied: boolean;
@@ -121,7 +135,11 @@ const STAGE_LABEL: Record<string, string> = {
   queued: "排队",
   preprocessing: "预处理",
   analyzing: "分析",
+  briefing: "AI1 简报",
+  planning: "AI2 方案",
+  scoring: "评分",
   rendering: "渲染",
+  reviewing: "AI3 复审",
   uploading: "上传",
   indexing: "入库",
   retrying: "重试",
@@ -132,10 +150,14 @@ const STAGE_LABEL: Record<string, string> = {
 
 const STAGE_PROGRESS_FLOOR: Record<string, number> = {
   queued: 5,
-  preprocessing: 12,
-  analyzing: 32,
-  rendering: 58,
-  uploading: 78,
+  preprocessing: 8,
+  analyzing: 30,
+  briefing: 36,
+  planning: 44,
+  scoring: 52,
+  rendering: 70,
+  reviewing: 82,
+  uploading: 86,
   indexing: 92,
   retrying: 45,
 };
@@ -468,8 +490,12 @@ export default function CreatePage() {
   const [nowTickMs, setNowTickMs] = useState(() => Date.now());
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobs, setJobs] = useState<VideoJobItem[]>([]);
+  const [sourceInputMode, setSourceInputMode] = useState<SourceInputMode>("local_upload");
   const [sourceVideoKey, setSourceVideoKey] = useState("");
   const [sourceVideoInfo, setSourceVideoInfo] = useState<UploadVideoInsight | null>(null);
+  const [sourceURLInput, setSourceURLInput] = useState("");
+  const [sourceURLProbe, setSourceURLProbe] = useState<SourceURLProbeResponse | null>(null);
+  const [probingSourceURL, setProbingSourceURL] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState<string>("gif");
   const [uploading, setUploading] = useState(false);
   const [uploadStage, setUploadStage] = useState<"idle" | "analyzing" | "uploading" | "probing" | "done">("idle");
@@ -771,12 +797,48 @@ export default function CreatePage() {
     }
   }, []);
 
+  const probeExternalSourceURLMock = useCallback(async () => {
+    const rawURL = sourceURLInput.trim();
+    if (!rawURL) {
+      setError("请先输入视频链接");
+      return;
+    }
+    setProbingSourceURL(true);
+    setMessage(null);
+    setError(null);
+    setSourceURLProbe(null);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/source-url-probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_url: rawURL }),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        setIsAuthed(false);
+        return;
+      }
+      if (!res.ok) {
+        throw new Error((await res.text()) || "链接解析失败");
+      }
+      const data = (await res.json()) as SourceURLProbeResponse;
+      setSourceURLProbe(data);
+      setMessage(data.message || "链接已解析（Mock占位）");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "链接解析失败";
+      setError(msg);
+    } finally {
+      setProbingSourceURL(false);
+    }
+  }, [sourceURLInput]);
+
   const uploadVideoFile = async (file: File) => {
     setUploading(true);
     setUploadStage("analyzing");
     setUploadProgress(0);
     setMessage(null);
     setError(null);
+    setSourceURLProbe(null);
     setSourceVideoKey("");
     setSourceVideoInfo(null);
 
@@ -850,6 +912,10 @@ export default function CreatePage() {
   };
 
   const handleCreateJob = async () => {
+    if (sourceInputMode !== "local_upload") {
+      setError("链接模式当前为 Mock 占位，暂不支持直接创建任务。请先切换到“本地上传”后创建任务。");
+      return;
+    }
     await createJobBySourceKey(sourceVideoKey);
   };
 
@@ -1006,119 +1072,212 @@ export default function CreatePage() {
         </div>
 
         <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
-              <input
-                type="file"
-                accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,video/mpeg,video/x-ms-wmv,video/x-flv,video/3gpp,video/mp2t,.m4v,.mts,.m2ts,.mpg"
-                className="hidden"
-                disabled={uploading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    void uploadVideoFile(file);
-                    e.currentTarget.value = "";
-                  }
-                }}
-              />
-              {uploading ? "上传中..." : "选择视频并上传"}
-            </label>
-
-            {(uploading || probingSourceVideo || uploadStage === "done") && (
-              <span className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-600">
-                {(uploading || probingSourceVideo) ? (
-                  <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-600" />
-                ) : (
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                )}
-                {uploadStage === "analyzing" ? "正在识别视频信息..." : null}
-                {uploadStage === "uploading" ? `上传进度 ${uploadProgress}%` : null}
-                {uploadStage === "probing" ? "上传完成，正在进行服务端探测..." : null}
-                {uploadStage === "done" ? "上传与识别完成，可确认创建任务" : null}
-              </span>
-            )}
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSourceInputMode("local_upload");
+                setMessage(null);
+                setError(null);
+              }}
+              className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                sourceInputMode === "local_upload"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              }`}
+            >
+              本地上传（已上线）
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSourceInputMode("external_url_mock");
+                setMessage(null);
+                setError(null);
+              }}
+              className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                sourceInputMode === "external_url_mock"
+                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              }`}
+            >
+              在线链接（Mock占位）
+            </button>
           </div>
 
-          {(uploading || probingSourceVideo || uploadStage === "done") && (
-            <div className="mt-3">
-              <div className="h-2 w-full overflow-hidden rounded bg-slate-200">
-                {uploadStage === "uploading" ? (
-                  <div
-                    className="upload-progress-fill h-full rounded bg-emerald-500 transition-all duration-300"
-                    style={{ width: `${Math.max(2, Math.min(100, uploadProgress || 0))}%` }}
+          {sourceInputMode === "local_upload" ? (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,video/mpeg,video/x-ms-wmv,video/x-flv,video/3gpp,video/mp2t,.m4v,.mts,.m2ts,.mpg"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        void uploadVideoFile(file);
+                        e.currentTarget.value = "";
+                      }
+                    }}
                   />
-                ) : uploadStage === "done" ? (
-                  <div className="h-full w-full rounded bg-emerald-500" />
-                ) : (
-                  <div className="upload-progress-indeterminate h-full w-1/3 rounded bg-emerald-500/80" />
+                  {uploading ? "上传中..." : "选择视频并上传"}
+                </label>
+
+                {(uploading || probingSourceVideo || uploadStage === "done") && (
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-600">
+                    {(uploading || probingSourceVideo) ? (
+                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-600" />
+                    ) : (
+                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    )}
+                    {uploadStage === "analyzing" ? "正在识别视频信息..." : null}
+                    {uploadStage === "uploading" ? `上传进度 ${uploadProgress}%` : null}
+                    {uploadStage === "probing" ? "上传完成，正在进行服务端探测..." : null}
+                    {uploadStage === "done" ? "上传与识别完成，可确认创建任务" : null}
+                  </span>
                 )}
               </div>
+
+              {(uploading || probingSourceVideo || uploadStage === "done") && (
+                <div className="mt-3">
+                  <div className="h-2 w-full overflow-hidden rounded bg-slate-200">
+                    {uploadStage === "uploading" ? (
+                      <div
+                        className="upload-progress-fill h-full rounded bg-emerald-500 transition-all duration-300"
+                        style={{ width: `${Math.max(2, Math.min(100, uploadProgress || 0))}%` }}
+                      />
+                    ) : uploadStage === "done" ? (
+                      <div className="h-full w-full rounded bg-emerald-500" />
+                    ) : (
+                      <div className="upload-progress-indeterminate h-full w-1/3 rounded bg-emerald-500/80" />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                <div className="text-xs font-semibold text-slate-500">已上传视频</div>
+                <div className="mt-1 break-all">{sourceVideoKey || "请先选择并上传视频文件"}</div>
+              </div>
+
+              {sourceVideoInfo ? (
+                <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-emerald-700">视频信息卡片</div>
+                    <div className="text-xs text-emerald-600">
+                      识别来源：{sourceVideoInfo.source === "server" ? "服务端 ffprobe" : "浏览器本地"}
+                    </div>
+                  </div>
+                  <div className="grid gap-2 text-xs text-slate-700 md:grid-cols-3">
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">文件名</div>
+                      <div className="mt-1 break-all">{sourceVideoInfo.file_name || "-"}</div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">格式 / MIME</div>
+                      <div className="mt-1">
+                        {(sourceVideoInfo.format || "-").toUpperCase()} · {sourceVideoInfo.mime_type || "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">大小</div>
+                      <div className="mt-1">{formatBytes(sourceVideoInfo.size_bytes)}</div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">时长</div>
+                      <div className="mt-1">
+                        {sourceVideoInfo.duration_sec && sourceVideoInfo.duration_sec > 0
+                          ? `${sourceVideoInfo.duration_sec.toFixed(1)}s`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">分辨率 / 尺寸</div>
+                      <div className="mt-1">
+                        {sourceVideoInfo.width && sourceVideoInfo.height
+                          ? `${sourceVideoInfo.width} x ${sourceVideoInfo.height}`
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                      <div className="text-[11px] text-slate-400">比例 / 方向 / 帧率</div>
+                      <div className="mt-1">
+                        {sourceVideoInfo.aspect_ratio || "-"} · {sourceVideoInfo.orientation || "-"} ·{" "}
+                        {sourceVideoInfo.fps && sourceVideoInfo.fps > 0 ? `${sourceVideoInfo.fps.toFixed(1)}fps` : "-"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                在线链接当前为 Mock 占位：支持解析平台类型与链接规范化，不会直接创建任务。
+              </div>
+              <div className="flex flex-col gap-2 md:flex-row">
+                <input
+                  value={sourceURLInput}
+                  onChange={(e) => setSourceURLInput(e.target.value)}
+                  placeholder="粘贴视频分享链接（抖音/快手/小红书/B站等）"
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => void probeExternalSourceURLMock()}
+                  disabled={probingSourceURL || !sourceURLInput.trim()}
+                  className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60"
+                >
+                  {probingSourceURL ? "解析中..." : "解析链接（Mock）"}
+                </button>
+              </div>
+              {sourceURLProbe ? (
+                <div className="rounded-xl border border-amber-100 bg-white px-4 py-3 text-xs text-slate-700">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div>
+                      <div className="text-slate-400">平台</div>
+                      <div className="mt-1 font-semibold">
+                        {sourceURLProbe.provider_label || sourceURLProbe.provider || "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-400">链接类型</div>
+                      <div className="mt-1 font-semibold">{sourceURLProbe.source_type || "-"}</div>
+                    </div>
+                    <div className="md:col-span-2">
+                      <div className="text-slate-400">规范化链接</div>
+                      <div className="mt-1 break-all">{sourceURLProbe.normalized_url || "-"}</div>
+                    </div>
+                    <div className="md:col-span-2">
+                      <div className="text-slate-400">说明</div>
+                      <div className="mt-1">{sourceURLProbe.message || "Mock占位"}</div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
-
-          <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-            <div className="text-xs font-semibold text-slate-500">已上传视频</div>
-            <div className="mt-1 break-all">
-              {sourceVideoKey || "请先选择并上传视频文件"}
-            </div>
-          </div>
-
-          {sourceVideoInfo ? (
-            <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-emerald-700">视频信息卡片</div>
-                <div className="text-xs text-emerald-600">
-                  识别来源：{sourceVideoInfo.source === "server" ? "服务端 ffprobe" : "浏览器本地"}
-                </div>
-              </div>
-              <div className="grid gap-2 text-xs text-slate-700 md:grid-cols-3">
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">文件名</div>
-                  <div className="mt-1 break-all">{sourceVideoInfo.file_name || "-"}</div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">格式 / MIME</div>
-                  <div className="mt-1">{(sourceVideoInfo.format || "-").toUpperCase()} · {sourceVideoInfo.mime_type || "-"}</div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">大小</div>
-                  <div className="mt-1">{formatBytes(sourceVideoInfo.size_bytes)}</div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">时长</div>
-                  <div className="mt-1">
-                    {sourceVideoInfo.duration_sec && sourceVideoInfo.duration_sec > 0
-                      ? `${sourceVideoInfo.duration_sec.toFixed(1)}s`
-                      : "-"}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">分辨率 / 尺寸</div>
-                  <div className="mt-1">
-                    {sourceVideoInfo.width && sourceVideoInfo.height
-                      ? `${sourceVideoInfo.width} x ${sourceVideoInfo.height}`
-                      : "-"}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] text-slate-400">比例 / 方向 / 帧率</div>
-                  <div className="mt-1">
-                    {sourceVideoInfo.aspect_ratio || "-"} · {sourceVideoInfo.orientation || "-"} ·{" "}
-                    {sourceVideoInfo.fps && sourceVideoInfo.fps > 0 ? `${sourceVideoInfo.fps.toFixed(1)}fps` : "-"}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             onClick={() => void handleCreateJob()}
-            disabled={creating || uploading || probingSourceVideo || !sourceVideoKey.trim()}
+            disabled={
+              creating ||
+              uploading ||
+              probingSourceVideo ||
+              sourceInputMode !== "local_upload" ||
+              !sourceVideoKey.trim()
+            }
             className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-bold text-white disabled:opacity-60"
           >
-            {creating ? "创建中..." : "确认创建任务"}
+            {creating
+              ? "创建中..."
+              : sourceInputMode === "local_upload"
+                ? "确认创建任务"
+                : "链接模式（Mock占位）"}
           </button>
           <button
             onClick={() => void loadJobs()}
@@ -1132,7 +1291,9 @@ export default function CreatePage() {
           </Link>
         </div>
         <div className="mt-2 text-xs text-slate-400">
-          上传完成后不会自动提交任务，请先确认视频信息，再点击“确认创建任务”。
+          {sourceInputMode === "local_upload"
+            ? "上传完成后不会自动提交任务，请先确认视频信息，再点击“确认创建任务”。"
+            : "在线链接当前仅做解析占位，不直接创建任务。"}
         </div>
 
         {message && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
