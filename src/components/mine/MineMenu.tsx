@@ -4,9 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const menuItems = [
-  { href: "/mine/works", label: "我的作品" },
-  { href: "/mine/favorites/collections", label: "收藏合集" },
   { href: "/mine/favorites/emojis", label: "收藏表情包" },
+  { href: "/mine/favorites/collections", label: "收藏合集" },
 ];
 
 function isActive(pathname: string, href: string) {

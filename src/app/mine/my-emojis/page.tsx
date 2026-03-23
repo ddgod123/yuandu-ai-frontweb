@@ -5,9 +5,6 @@ export default function LegacyMyEmojisPage({
 }: {
   searchParams?: { job_id?: string };
 }) {
-  const jobID = String(searchParams?.job_id || "").trim();
-  if (jobID) {
-    redirect(`/mine/works/${encodeURIComponent(jobID)}`);
-  }
-  redirect("/mine/works");
+  void searchParams;
+  redirect("/mine/favorites/emojis");
 }

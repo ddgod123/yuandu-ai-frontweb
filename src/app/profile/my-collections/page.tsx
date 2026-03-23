@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function LegacyMyCollectionsPage() {
-  redirect("/mine/works");
+  redirect("/mine/favorites/collections");
 }

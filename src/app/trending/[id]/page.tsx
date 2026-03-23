@@ -18,9 +18,8 @@ type ApiCollection = {
   id: number;
   title: string;
   cover_url?: string;
-  owner_id?: number;
+  preview_images?: string[];
   file_count?: number;
-  download_code?: string;
   creator_name?: string;
   creator_name_zh?: string;
   creator_name_en?: string;
@@ -28,11 +27,6 @@ type ApiCollection = {
   favorite_count?: number;
   like_count?: number;
   download_count?: number;
-};
-
-type ApiEmoji = {
-  preview_url?: string;
-  file_url?: string;
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -78,29 +72,6 @@ function normalizePreviewUrl(raw: string) {
   return trimmed;
 }
 
-async function fetchPreviewImages(collectionId: number, coverURL: string | undefined) {
-  const params = new URLSearchParams({
-    collection_id: String(collectionId),
-    page_size: String(PREVIEW_COUNT),
-  });
-  try {
-    const res = await fetch(`${API_BASE}/emojis?${params.toString()}`, { cache: "no-store" });
-    if (!res.ok) {
-      return coverURL ? [normalizePreviewUrl(coverURL)] : [];
-    }
-    const data = (await res.json()) as { items?: ApiEmoji[] };
-    const images = (data.items || [])
-      .map((item) => item.preview_url || item.file_url || "")
-      .map((item) => normalizePreviewUrl(item))
-      .filter((u) => Boolean(u) && isImageFile(u))
-      .slice(0, PREVIEW_COUNT);
-    if (images.length > 0) return images;
-  } catch {
-    // ignore
-  }
-  return coverURL ? [normalizePreviewUrl(coverURL)] : [];
-}
-
 async function fetchIP(id: string) {
   try {
     const res = await fetch(`${API_BASE}/ips/${id}`, { cache: "no-store" });
@@ -114,9 +85,9 @@ async function fetchIP(id: string) {
 async function fetchCollections(ipId: string, page: number, sort: string) {
   try {
     const params = new URLSearchParams({
-      ip_id: ipId,
       page_size: String(PAGE_SIZE),
       page: String(page),
+      preview_count: String(PREVIEW_COUNT),
     });
     if (sort === "count") {
       params.set("sort", "file_count");
@@ -125,7 +96,7 @@ async function fetchCollections(ipId: string, page: number, sort: string) {
       params.set("sort", "created_at");
       params.set("order", "desc");
     }
-    const res = await fetch(`${API_BASE}/collections?${params.toString()}`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/ips/${ipId}/collections?${params.toString()}`, { cache: "no-store" });
     if (!res.ok) return { items: [], total: 0 };
     const data = (await res.json()) as { items?: ApiCollection[]; total?: number };
     return {
@@ -188,25 +159,30 @@ export default async function Page({
   const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 0;
   const pagination = buildPagination(currentPage, totalPages);
 
-  const cards: CollectionCard[] = await Promise.all(
-    collections.map(async (item) => {
-      const previews = await fetchPreviewImages(item.id, item.cover_url);
-      const authorName =
-        item.creator_name || item.creator_name_zh || item.creator_name_en || "官方";
-      const authorAvatar = item.creator_avatar_url || DEFAULT_CREATOR_AVATAR;
-      return {
-        id: item.id,
-        title: item.title || "未命名合集",
-        author: authorName,
-        authorAvatar,
-        count: Number(item.file_count) || previews.length,
-        favoriteCount: Number(item.favorite_count) || 0,
-        likeCount: Number(item.like_count) || 0,
-        downloadCount: Number(item.download_count) || 0,
-        previewImages: previews,
-      };
-    })
-  );
+  const cards: CollectionCard[] = collections.map((item) => {
+    const previews = Array.isArray(item.preview_images)
+      ? item.preview_images
+          .map((url) => normalizePreviewUrl(url || ""))
+          .filter((url) => Boolean(url) && isImageFile(url))
+          .slice(0, PREVIEW_COUNT)
+      : [];
+    const coverFallback = normalizePreviewUrl(item.cover_url || "");
+    const previewImages = previews.length > 0 ? previews : coverFallback ? [coverFallback] : [];
+    const authorName =
+      item.creator_name || item.creator_name_zh || item.creator_name_en || "官方";
+    const authorAvatar = item.creator_avatar_url || DEFAULT_CREATOR_AVATAR;
+    return {
+      id: item.id,
+      title: item.title || "未命名合集",
+      author: authorName,
+      authorAvatar,
+      count: Number(item.file_count) || previewImages.length,
+      favoriteCount: Number(item.favorite_count) || 0,
+      likeCount: Number(item.like_count) || 0,
+      downloadCount: Number(item.download_count) || 0,
+      previewImages,
+    };
+  });
 
   return (
     <main className="min-h-screen bg-white">

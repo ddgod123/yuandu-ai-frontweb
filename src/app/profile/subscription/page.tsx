@@ -4,19 +4,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
-import { 
+import {
   Crown, 
   Ticket, 
   CheckCircle2, 
-  Clock, 
   History, 
   Zap, 
   ShieldCheck, 
   Info,
   Calendar,
   AlertCircle,
-  Users,
-  ChevronRight
+  Users
 } from "lucide-react";
 
 type Profile = {
@@ -67,11 +65,60 @@ type RedeemSubmitResponse = {
   code_mask?: string;
 };
 
+type CollectionCodeValidateResponse = {
+  valid: boolean;
+  message: string;
+  code_mask?: string;
+  status?: string;
+  collection_id?: number;
+  collection_title?: string;
+  granted_download_times?: number;
+  max_redeem_users?: number;
+  used_redeem_users?: number;
+  starts_at?: string;
+  ends_at?: string;
+};
+
+type CollectionCodeRedeemResponse = {
+  error?: string;
+  message?: string;
+  code_mask?: string;
+  collection_id?: number;
+  collection_title?: string;
+  granted_download_times?: number;
+  remaining_download_times?: number;
+  expires_at?: string;
+};
+
+type CollectionDownloadEntitlement = {
+  id: number;
+  collection_id: number;
+  collection_title?: string;
+  granted_download_times?: number;
+  used_download_times?: number;
+  remaining_download_times?: number;
+  status?: string;
+  expires_at?: string;
+  last_consumed_at?: string;
+};
+
+type CollectionDownloadEntitlementResponse = {
+  items?: CollectionDownloadEntitlement[];
+};
+
 type LatestRedeemCard = {
   code_mask?: string;
   plan?: string;
   duration_days?: number;
   starts_at?: string;
+  expires_at?: string;
+};
+
+type LatestCollectionRedeemCard = {
+  code_mask?: string;
+  collection_title?: string;
+  granted_download_times?: number;
+  remaining_download_times?: number;
   expires_at?: string;
 };
 
@@ -188,6 +235,14 @@ export default function SubscriptionPage() {
   const [latestRedeem, setLatestRedeem] = useState<LatestRedeemCard | null>(null);
   const [redeemRecords, setRedeemRecords] = useState<RedeemRecord[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  const [collectionCode, setCollectionCode] = useState("");
+  const [collectionValidating, setCollectionValidating] = useState(false);
+  const [collectionRedeeming, setCollectionRedeeming] = useState(false);
+  const [collectionValidation, setCollectionValidation] = useState<CollectionCodeValidateResponse | null>(null);
+  const [latestCollectionRedeem, setLatestCollectionRedeem] = useState<LatestCollectionRedeemCard | null>(null);
+  const [collectionEntitlements, setCollectionEntitlements] = useState<CollectionDownloadEntitlement[]>([]);
+  const [collectionEntitlementsLoading, setCollectionEntitlementsLoading] = useState(false);
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -251,6 +306,28 @@ export default function SubscriptionPage() {
     }
   }, [router]);
 
+  const loadCollectionEntitlements = useCallback(async () => {
+    setCollectionEntitlementsLoading(true);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-entitlements?page=1&page_size=50`);
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      if (!res.ok) {
+        setCollectionEntitlements([]);
+        return;
+      }
+      const data = (await res.json()) as CollectionDownloadEntitlementResponse;
+      setCollectionEntitlements(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setCollectionEntitlements([]);
+    } finally {
+      setCollectionEntitlementsLoading(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -260,6 +337,7 @@ export default function SubscriptionPage() {
           return;
         }
         await loadRedeemRecords();
+        await loadCollectionEntitlements();
       } catch {
         setMessage("加载订阅信息失败，请稍后重试");
       } finally {
@@ -268,7 +346,7 @@ export default function SubscriptionPage() {
     };
 
     load();
-  }, [loadProfile, loadRedeemRecords]);
+  }, [loadCollectionEntitlements, loadProfile, loadRedeemRecords]);
 
   const handleValidate = async () => {
     const code = redeemCode.trim();
@@ -346,6 +424,81 @@ export default function SubscriptionPage() {
       setMessage("兑换失败，请稍后重试");
     } finally {
       setRedeeming(false);
+    }
+  };
+
+  const handleValidateCollectionCode = async () => {
+    const code = collectionCode.trim();
+    if (!code) {
+      setCollectionMessage("请输入合集次卡兑换码");
+      return;
+    }
+    setCollectionValidating(true);
+    setCollectionMessage(null);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-code/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      const data = (await res.json()) as CollectionCodeValidateResponse & { error?: string };
+      if (!res.ok) {
+        setCollectionMessage(data?.error || "验证失败，请稍后重试");
+        return;
+      }
+      setCollectionValidation(data);
+      setCollectionMessage(data.message || (data.valid ? "兑换码可用" : "兑换码不可用"));
+    } catch {
+      setCollectionMessage("验证失败，请稍后重试");
+    } finally {
+      setCollectionValidating(false);
+    }
+  };
+
+  const handleRedeemCollectionCode = async () => {
+    const code = collectionCode.trim();
+    if (!code) {
+      setCollectionMessage("请输入合集次卡兑换码");
+      return;
+    }
+    setCollectionRedeeming(true);
+    setCollectionMessage(null);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-code/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      const data = (await res.json()) as CollectionCodeRedeemResponse;
+      if (!res.ok) {
+        setCollectionMessage(data?.error || "兑换失败，请稍后重试");
+        return;
+      }
+      setLatestCollectionRedeem({
+        code_mask: data.code_mask,
+        collection_title: data.collection_title,
+        granted_download_times: data.granted_download_times,
+        remaining_download_times: data.remaining_download_times,
+        expires_at: data.expires_at,
+      });
+      setCollectionValidation(null);
+      setCollectionCode("");
+      setCollectionMessage(data?.message || "兑换成功");
+      await loadCollectionEntitlements();
+    } catch {
+      setCollectionMessage("兑换失败，请稍后重试");
+    } finally {
+      setCollectionRedeeming(false);
     }
   };
 
@@ -535,6 +688,126 @@ export default function SubscriptionPage() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* 合集次卡兑换 */}
+          <div className="mt-8 rounded-[2.5rem] border border-blue-100 bg-blue-50/30 p-8 md:p-10">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500 text-white shadow-md shadow-blue-200">
+                <Ticket size={18} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-slate-900">合集次卡兑换</h2>
+                <p className="text-xs font-bold uppercase tracking-widest text-blue-600/60">
+                  Collection Download Card
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <input
+                value={collectionCode}
+                onChange={(event) => {
+                  setCollectionCode(event.target.value);
+                  setCollectionValidation(null);
+                }}
+                placeholder="输入合集次卡兑换码"
+                className="h-14 flex-1 rounded-2xl border border-blue-100 bg-white px-5 text-base font-bold tracking-wider text-slate-800 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+              />
+              <button
+                type="button"
+                disabled={collectionValidating}
+                onClick={handleValidateCollectionCode}
+                className="h-14 rounded-2xl border border-blue-200 bg-white px-6 text-sm font-black text-blue-700 transition hover:bg-blue-50 disabled:opacity-60"
+              >
+                {collectionValidating ? "验证中..." : "验证"}
+              </button>
+              <button
+                type="button"
+                disabled={collectionRedeeming}
+                onClick={handleRedeemCollectionCode}
+                className="h-14 rounded-2xl bg-blue-600 px-8 text-sm font-black text-white shadow-lg shadow-blue-200 transition hover:bg-blue-500 disabled:opacity-60"
+              >
+                {collectionRedeeming ? "兑换中..." : "立即兑换"}
+              </button>
+            </div>
+
+            {collectionValidation ? (
+              <div
+                className={`mt-4 rounded-2xl border px-5 py-4 text-sm ${
+                  collectionValidation.valid ? "border-emerald-100 bg-emerald-50/50 text-emerald-700" : "border-rose-100 bg-rose-50/50 text-rose-700"
+                }`}
+              >
+                <div className="font-black">{collectionValidation.message}</div>
+                {collectionValidation.valid ? (
+                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                    <div>合集：{collectionValidation.collection_title || `#${collectionValidation.collection_id || "-"}`}</div>
+                    <div>到账次数：{collectionValidation.granted_download_times || 0}</div>
+                    <div>
+                      可兑换用户：{collectionValidation.used_redeem_users || 0}/{collectionValidation.max_redeem_users || 0}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {collectionMessage ? (
+              <div className="mt-4 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm font-bold text-blue-700">
+                {collectionMessage}
+              </div>
+            ) : null}
+
+            {latestCollectionRedeem ? (
+              <div className="mt-4 rounded-2xl border border-indigo-100 bg-white px-5 py-4 text-sm text-slate-700">
+                <div className="font-black text-indigo-700">本次次卡兑换成功</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <div>合集：{latestCollectionRedeem.collection_title || "-"}</div>
+                  <div>本次到账：{latestCollectionRedeem.granted_download_times || 0}</div>
+                  <div>剩余次数：{latestCollectionRedeem.remaining_download_times || 0}</div>
+                  <div>兑换码：{latestCollectionRedeem.code_mask || "-"}</div>
+                  <div className="sm:col-span-2">过期时间：{formatTime(latestCollectionRedeem.expires_at)}</div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-6 overflow-hidden rounded-2xl border border-blue-100 bg-white">
+              <div className="border-b border-blue-50 px-5 py-3 text-sm font-black text-slate-700">我的合集次卡权益</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-blue-50/40 text-xs uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="px-5 py-3">合集</th>
+                      <th className="px-5 py-3">总次数</th>
+                      <th className="px-5 py-3">已用</th>
+                      <th className="px-5 py-3">剩余</th>
+                      <th className="px-5 py-3">状态</th>
+                      <th className="px-5 py-3">过期时间</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-blue-50">
+                    {collectionEntitlements.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-5 py-3 font-semibold text-slate-700">
+                          {item.collection_title || `合集 #${item.collection_id}`}
+                        </td>
+                        <td className="px-5 py-3">{item.granted_download_times || 0}</td>
+                        <td className="px-5 py-3">{item.used_download_times || 0}</td>
+                        <td className="px-5 py-3 font-black text-blue-600">{item.remaining_download_times || 0}</td>
+                        <td className="px-5 py-3">{item.status || "-"}</td>
+                        <td className="px-5 py-3">{formatTime(item.expires_at)}</td>
+                      </tr>
+                    ))}
+                    {collectionEntitlements.length === 0 && !collectionEntitlementsLoading ? (
+                      <tr>
+                        <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                          暂无合集次卡权益
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 

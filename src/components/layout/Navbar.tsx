@@ -4,25 +4,61 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
+  API_BASE,
   AUTH_CHANGE_EVENT,
   buildDefaultAvatar,
   ensureAuthSession,
+  fetchWithAuthRetry,
   getStoredUser,
+  hasStoredAuthState,
 } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
-import { LogIn } from "lucide-react";
+import { Crown, LogIn } from "lucide-react";
 
 type UserInfo = {
   name: string;
   avatar: string;
+  isSubscriber: boolean;
+  remainingCollectionDownloads: number;
+};
+
+type MeResponse = {
+  display_name?: string;
+  avatar_url?: string;
+  is_subscriber?: boolean;
+};
+
+type CollectionDownloadEntitlement = {
+  remaining_download_times?: number;
+};
+
+type CollectionDownloadEntitlementResponse = {
+  items?: CollectionDownloadEntitlement[];
 };
 
 export default function Navbar() {
   const pathname = usePathname();
-  const [isAuthed, setIsAuthed] = useState(false);
-  const [user, setUser] = useState<UserInfo>({
-    name: "表情用户",
-    avatar: buildDefaultAvatar("表情用户"),
+  const [isAuthed, setIsAuthed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return hasStoredAuthState();
+  });
+  const [authReady, setAuthReady] = useState(false);
+  const [user, setUser] = useState<UserInfo>(() => {
+    if (typeof window !== "undefined" && hasStoredAuthState()) {
+      const stored = getStoredUser();
+      return {
+        name: stored.name,
+        avatar: stored.avatar,
+        isSubscriber: false,
+        remainingCollectionDownloads: 0,
+      };
+    }
+    return {
+      name: "表情用户",
+      avatar: buildDefaultAvatar("表情用户"),
+      isSubscriber: false,
+      remainingCollectionDownloads: 0,
+    };
   });
 
   useEffect(() => {
@@ -35,12 +71,61 @@ export default function Navbar() {
         setUser({
           name: "表情用户",
           avatar: buildDefaultAvatar("表情用户"),
+          isSubscriber: false,
+          remainingCollectionDownloads: 0,
         });
         setIsAuthed(false);
+        setAuthReady(true);
         return;
       }
-      setUser(getStoredUser());
+
+      const fallback = getStoredUser();
+      let nextUser: UserInfo = {
+        name: fallback.name,
+        avatar: fallback.avatar,
+        isSubscriber: false,
+        remainingCollectionDownloads: 0,
+      };
+
+      try {
+        const meRes = await fetchWithAuthRetry(`${API_BASE}/me`);
+        if (meRes.ok) {
+          const me = (await meRes.json()) as MeResponse;
+          const displayName = (me?.display_name || "").trim();
+          const avatarURL = (me?.avatar_url || "").trim();
+          nextUser = {
+            ...nextUser,
+            name: displayName || fallback.name,
+            avatar: avatarURL || fallback.avatar,
+            isSubscriber: Boolean(me?.is_subscriber),
+          };
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const entitlementRes = await fetchWithAuthRetry(
+          `${API_BASE}/me/collection-download-entitlements?page=1&page_size=200&status=active`
+        );
+        if (entitlementRes.ok) {
+          const entitlementData =
+            (await entitlementRes.json()) as CollectionDownloadEntitlementResponse;
+          const items = Array.isArray(entitlementData?.items) ? entitlementData.items : [];
+          const remaining = items.reduce((sum, item) => {
+            const value = Number(item?.remaining_download_times || 0);
+            return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+          }, 0);
+          nextUser.remainingCollectionDownloads = remaining;
+        }
+      } catch {
+        // ignore
+      }
+
+      if (cancelled) return;
+      setUser(nextUser);
       setIsAuthed(true);
+      setAuthReady(true);
     };
 
     void syncAuth();
@@ -91,7 +176,6 @@ export default function Navbar() {
               { label: "首页", href: "/" },
               { label: "表情包大全", href: "/categories" },
               { label: "表情包IP", href: "/trending" },
-              { label: "创作表情包", href: "/create" },
               { label: "我的", href: "/mine" },
             ].map((item) => {
               const isActive =
@@ -122,14 +206,31 @@ export default function Navbar() {
             <div className="flex items-center gap-3">
               <Link
                 href="/profile"
-                className="group flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-1 pr-4 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-emerald-100 hover:shadow-md hover:shadow-emerald-500/5"
+                className="group flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-1 pl-1 pr-3 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-emerald-100 hover:shadow-md hover:shadow-emerald-500/5"
               >
                 <div className="relative h-8 w-8 overflow-hidden rounded-xl bg-slate-100 ring-2 ring-white transition-transform group-hover:scale-105">
                   <Image src={user.avatar} alt={user.name} fill unoptimized className="object-cover" />
                 </div>
-                <span className="hidden max-w-[100px] truncate sm:inline">{user.name}</span>
+                <div className="hidden min-w-0 flex-col sm:flex">
+                  <div className="flex items-center gap-1.5">
+                    <span className="max-w-[100px] truncate text-sm font-bold text-slate-700">{user.name}</span>
+                    {user.isSubscriber ? (
+                      <span
+                        title="订阅用户"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-50 text-amber-500 ring-1 ring-amber-200"
+                      >
+                        <Crown size={11} />
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    合集次卡：{user.remainingCollectionDownloads}
+                  </span>
+                </div>
               </Link>
             </div>
+          ) : !authReady ? (
+            <div className="h-10 w-[132px] animate-pulse rounded-xl border border-slate-100 bg-slate-100/70" />
           ) : (
             <div className="flex items-center gap-2">
               <Link

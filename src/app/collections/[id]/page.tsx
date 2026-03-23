@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Info, Bookmark, ChevronDown } from "lucide-react";
-import { API_BASE, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
+import { API_BASE, emitAuthChange, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 const PAGE_SIZE = 60;
@@ -128,6 +128,12 @@ function resolveDownloadNotice(status: number, code: string, fallback: string, t
   if (status === 403) {
     if (code === "user_disabled") return "账号状态异常，暂时无法下载";
     if (code === "subscription_required") return `${targetLabel}需要订阅权限，请到个人中心开通`;
+    if (code === "subscription_or_entitlement_required" || code === "collection_download_entitlement_required") {
+      return `${targetLabel}需要订阅或次卡权益，请前往「我的订阅」兑换次卡`;
+    }
+    if (code === "collection_download_entitlement_exhausted") return "该合集次卡次数已用尽，请重新兑换";
+    if (code === "collection_download_entitlement_expired") return "该合集次卡已过期，请重新兑换";
+    if (code === "collection_download_entitlement_disabled") return "该合集次卡已被停用，请联系运营";
     return "暂无下载权限";
   }
   if (status === 404) return "资源不存在或已下架";
@@ -591,6 +597,7 @@ export default function CollectionDetailPage() {
         download_count: (prev.download_count || 0) + 1,
       };
     });
+    emitAuthChange();
   };
 
   const toggleCollectionLike = async () => {
