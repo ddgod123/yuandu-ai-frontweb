@@ -109,7 +109,7 @@ export default function LoginPage() {
                 {[
                   { title: "免打扰登录", desc: "快速安全接入" },
                   { title: "下载更稳定", desc: "专属加速通道" },
-                  { title: "记录可追溯", desc: "历史下载管理" },
+                  { title: "权益清晰可见", desc: "订阅与次卡一目了然" },
                   { title: "收藏同步", desc: "多端数据互通" }
                 ].map((item) => (
                   <div key={item.title} className="group flex items-center gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition-all hover:border-emerald-100 hover:shadow-md hover:shadow-emerald-500/5">
@@ -153,12 +153,7 @@ export default function LoginPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">登录密码</label>
-                    <Link href="/forgot-password" title="该功能暂未实现" className="text-xs font-bold text-slate-400 hover:text-emerald-500">
-                      忘记密码？
-                    </Link>
-                  </div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400">登录密码</label>
                   <div className="relative">
                     <LockKeyhole size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input

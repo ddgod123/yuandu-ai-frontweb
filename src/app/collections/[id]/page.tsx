@@ -77,17 +77,6 @@ function buildStorageProxyCandidate(rawUrl: string) {
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 
-function triggerBlobDownload(blob: Blob, filename: string) {
-  const objectURL = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectURL;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(objectURL);
-}
-
 function buildCollectionZipName(title?: string | null, collectionId?: number) {
   const raw = (title || "").trim();
   const sanitized = raw.replace(/[\\/:*?"<>|]/g, "_").trim();
@@ -162,8 +151,8 @@ function buildImageCandidates(rawUrl: string): string[] {
   // 开发阶段默认优先走后端 storage proxy，避免依赖未备案/冻结域名。
   add(proxyCandidate);
 
-  const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
-  const preferHttps = protocol === "https:";
+  // 避免 SSR/CSR 首帧因 window 协议差异导致 hydration mismatch。
+  const preferHttps = true;
 
   if (trimmed.startsWith("//")) {
     const httpsURL = `https:${trimmed}`;
@@ -194,12 +183,7 @@ function buildImageCandidates(rawUrl: string): string[] {
   }
 
   if (trimmed.startsWith("/")) {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    if (origin) {
-      add(`${origin}${trimmed}`);
-    } else {
-      add(trimmed);
-    }
+    add(trimmed);
     add(proxyCandidate);
     return candidates;
   }
@@ -455,29 +439,21 @@ export default function CollectionDetailPage() {
     setDownloadingZip(true);
     setDownloadingAllZipBundle(true);
     try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/collections/${collectionId}/download-zip-all`);
-      if (res.status === 401) {
-        openAuthPrompt("请先登录再继续下载");
-        return;
-      }
-      if (res.status === 403) {
-        const apiErr = await parseApiError(res);
+      const result = await requestDownloadLink(`${API_BASE}/collections/${collectionId}/download-zip-all`);
+      if (!result.ok) {
+        if (result.error.status === 401) {
+          openAuthPrompt("请先登录再继续下载");
+          return;
+        }
         setNotice(
-          apiErr.message ||
-            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载合集")
+          result.error.message ||
+            resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载合集")
         );
         return;
       }
-      if (!res.ok) {
-        setNotice("下载失败，请稍后重试");
-        return;
-      }
-
-      const blob = await res.blob();
       const fileName = buildCollectionZipName(collection?.title, collectionId);
-      triggerBlobDownload(blob, fileName);
+      triggerURLDownload(result.data.url, result.data.name || fileName);
       bumpCollectionDownloadCount();
-      setNotice("已下载打包文件");
     } catch {
       setNotice("下载失败，请稍后重试");
     } finally {

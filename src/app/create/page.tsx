@@ -487,7 +487,8 @@ function buildInvalidSourceVideoMessage(payload: CreateJobErrorPayload | null) {
 export default function CreatePage() {
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
-  const [nowTickMs, setNowTickMs] = useState(() => Date.now());
+  // 首帧保持稳定，避免 SSR/CSR 时间戳差异导致 hydration mismatch。
+  const [nowTickMs, setNowTickMs] = useState(0);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobs, setJobs] = useState<VideoJobItem[]>([]);
   const [sourceInputMode, setSourceInputMode] = useState<SourceInputMode>("local_upload");
@@ -621,6 +622,10 @@ export default function CreatePage() {
       setSelectedFormat(firstSupported.value);
     }
   }, [capabilityMap, selectedFormat]);
+
+  useEffect(() => {
+    setNowTickMs(Date.now());
+  }, []);
 
   useEffect(() => {
     if (!isAuthed || !hasRunningJob) return;

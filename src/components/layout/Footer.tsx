@@ -162,6 +162,16 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/create" className="transition-colors hover:text-emerald-500">
+                  视频转图片
+                </Link>
+              </li>
+              <li>
+                <Link href="/mine/works" className="transition-colors hover:text-emerald-500">
+                  我的作品
+                </Link>
+              </li>
+              <li>
                 <Link href="/profile/favorites" className="transition-colors hover:text-emerald-500">
                   我的收藏
                 </Link>

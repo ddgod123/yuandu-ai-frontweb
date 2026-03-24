@@ -1,9 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, RefreshCw, Search } from "lucide-react";
+import { emitBehaviorEvent } from "@/lib/behavior-events";
+import SmartImage from "@/components/common/SmartImage";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 const PAGE_SIZE = 12;
@@ -65,6 +66,17 @@ export default function TrendingPage() {
     }
   };
 
+  const trackIPSearch = () => {
+    const q = keyword.trim();
+    if (!q) return;
+    emitBehaviorEvent("search_ip", {
+      metadata: {
+        keyword: q,
+        keyword_length: q.length,
+      },
+    });
+  };
+
   useEffect(() => {
     loadIps();
   }, []);
@@ -111,6 +123,7 @@ export default function TrendingPage() {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
+                    trackIPSearch();
                     loadIps();
                     setCurrentPage(1);
                   }
@@ -119,7 +132,10 @@ export default function TrendingPage() {
             </div>
             <button
               type="button"
-              onClick={() => loadIps()}
+              onClick={() => {
+                trackIPSearch();
+                loadIps();
+              }}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
             >
@@ -163,17 +179,16 @@ export default function TrendingPage() {
                 <Link
                   key={ip.id}
                   href={`/trending/${ip.id}`}
-                  className="group overflow-hidden rounded-3xl border-2 border-slate-100 bg-white shadow-sm transition hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
+                  className="group overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
                 >
                   <div className="h-40 bg-gradient-to-b from-emerald-50/60 to-slate-50">
                     {ip.cover_url ? (
                       <div className="relative h-full w-full">
-                        <Image
-                          src={ip.cover_url}
+                        <SmartImage
+                          url={ip.cover_url}
                           alt={ip.name}
-                          fill
-                          unoptimized
                           className="object-cover transition duration-300 group-hover:scale-105"
+                          loading="lazy"
                         />
                       </div>
                     ) : (
@@ -183,16 +198,18 @@ export default function TrendingPage() {
                     )}
                   </div>
                   <div className="p-4">
-                    <div className="line-clamp-1 text-lg font-black text-slate-900">{ip.name || "未命名 IP"}</div>
-                    <div className="mt-1 line-clamp-1 text-xs text-slate-400">{ip.slug || "-"}</div>
-                    <div className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm text-slate-500">
+                    <div className="line-clamp-1 text-base font-black text-slate-900 transition-colors group-hover:text-emerald-600">
+                      {ip.name || "未命名 IP"}
+                    </div>
+                    <div className="mt-1 line-clamp-1 text-[11px] font-semibold text-slate-400">{ip.slug || "-"}</div>
+                    <div className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm leading-relaxed text-slate-500">
                       {ip.description || "暂无简介"}
                     </div>
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                      <div className="inline-flex items-center rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
                         合集 {Number(ip.collection_count || 0)}
                       </div>
-                      <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700 transition group-hover:bg-emerald-50">
+                      <div className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1 text-[10px] font-black text-emerald-700 transition group-hover:bg-emerald-50">
                         进入
                         <ArrowRight className="h-3.5 w-3.5" />
                       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -10,8 +10,8 @@ import {
   ensureAuthSession,
   fetchWithAuthRetry,
   getStoredUser,
-  hasStoredAuthState,
 } from "@/lib/auth-client";
+import { emitBehaviorEvent } from "@/lib/behavior-events";
 import { usePathname } from "next/navigation";
 import { Crown, LogIn } from "lucide-react";
 
@@ -38,27 +38,16 @@ type CollectionDownloadEntitlementResponse = {
 
 export default function Navbar() {
   const pathname = usePathname();
-  const [isAuthed, setIsAuthed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasStoredAuthState();
-  });
+  const lastTrackedPathRef = useRef<string>("");
+  // 为避免 SSR/CSR 首帧不一致导致 hydration mismatch，首帧统一按未鉴权占位渲染，
+  // 鉴权状态在 useEffect 里再同步。
+  const [isAuthed, setIsAuthed] = useState(false);
   const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState<UserInfo>(() => {
-    if (typeof window !== "undefined" && hasStoredAuthState()) {
-      const stored = getStoredUser();
-      return {
-        name: stored.name,
-        avatar: stored.avatar,
-        isSubscriber: false,
-        remainingCollectionDownloads: 0,
-      };
-    }
-    return {
-      name: "表情用户",
-      avatar: buildDefaultAvatar("表情用户"),
-      isSubscriber: false,
-      remainingCollectionDownloads: 0,
-    };
+  const [user, setUser] = useState<UserInfo>({
+    name: "表情用户",
+    avatar: buildDefaultAvatar("表情用户"),
+    isSubscriber: false,
+    remainingCollectionDownloads: 0,
   });
 
   useEffect(() => {
@@ -152,6 +141,24 @@ export default function Navbar() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const currentPath = `${pathname}${window.location.search || ""}`;
+    if (lastTrackedPathRef.current === currentPath) return;
+    lastTrackedPathRef.current = currentPath;
+
+    let eventName = "";
+    if (pathname === "/") eventName = "page_view_home";
+    else if (pathname.startsWith("/categories")) eventName = "page_view_categories";
+    else if (pathname.startsWith("/trending")) eventName = "page_view_ip";
+    else if (pathname.startsWith("/collections/")) eventName = "page_view_collection";
+    if (!eventName) return;
+
+    emitBehaviorEvent(eventName, {
+      route: currentPath,
+    });
+  }, [pathname]);
+
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-slate-100 bg-white/70 backdrop-blur-xl transition-all duration-300">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
@@ -176,6 +183,8 @@ export default function Navbar() {
               { label: "首页", href: "/" },
               { label: "表情包大全", href: "/categories" },
               { label: "表情包IP", href: "/trending" },
+              { label: "视频转图片", href: "/create" },
+              { label: "我的作品", href: "/mine/works" },
               { label: "我的", href: "/mine" },
             ].map((item) => {
               const isActive =

@@ -8,7 +8,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api"
 type CollectionBrief = {
   id: number;
   title: string;
-  cover_key?: string;
   cover_url?: string;
   file_count?: number;
   creator_name?: string;
@@ -24,15 +23,6 @@ type HomeStats = {
   total_collections?: number;
   total_emojis?: number;
   today_new_emojis?: number;
-};
-
-type BatchObjectURLItem = {
-  key?: string;
-  url?: string;
-};
-
-type BatchObjectURLResponse = {
-  items?: BatchObjectURLItem[];
 };
 
 async function fetchHomeStats(): Promise<HomeStats | null> {
@@ -88,35 +78,6 @@ async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
   }
 }
 
-async function fetchSignedCoverMap(keys: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const deduped = Array.from(new Set(keys.map((key) => key.trim()).filter(Boolean)));
-  if (!deduped.length) return map;
-  try {
-    const res = await fetch(
-      `${API_BASE}/storage/urls`,
-      {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: deduped }),
-      }
-    );
-    if (!res.ok) return map;
-    const data = (await res.json()) as BatchObjectURLResponse;
-    (data.items || []).forEach((item) => {
-      const key = (item.key || "").trim();
-      const url = (item.url || "").trim();
-      if (key && url) {
-        map.set(key, url);
-      }
-    });
-  } catch {
-    return map;
-  }
-  return map;
-}
-
 export default async function Page() {
   const homeStats = await fetchHomeStats();
   const todayText =
@@ -133,31 +94,17 @@ export default async function Page() {
       : "--";
   const latestCollections = await fetchLatestCollections(12);
   const featuredCollections = await fetchFeaturedCollections(4);
-  const coverKeys = [
-    ...latestCollections.map((item) => item.cover_key || ""),
-    ...featuredCollections.map((item) => item.cover_key || ""),
-  ];
-  const signedCoverMap = await fetchSignedCoverMap(coverKeys);
-
-  const pickCover = (item: CollectionBrief) => {
-    const key = (item.cover_key || "").trim();
-    if (key && signedCoverMap.has(key)) {
-      return signedCoverMap.get(key) || "";
-    }
-    return (item.cover_url || "").trim();
-  };
 
   const latestWithCovers = await Promise.all(
     latestCollections.map(async (item) => ({
       ...item,
-      coverKey: item.cover_key || "",
-      cover: pickCover(item),
+      cover: (item.cover_url || "").trim(),
     }))
   );
   const featuredWithCovers = await Promise.all(
     featuredCollections.map(async (item) => ({
       ...item,
-      cover: pickCover(item),
+      cover: (item.cover_url || "").trim(),
       author: item.creator_name || item.creator_name_zh || item.creator_name_en || "官方推荐",
     }))
   );

@@ -4,11 +4,9 @@ import type { NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // V1 scope: archive/download only. Hide creator flow entrances.
+  // Keep admin entry out of frontweb.
   if (
     pathname.startsWith("/admin") ||
-    pathname === "/create" ||
-    pathname.startsWith("/mine/works") ||
     pathname === "/mine/my-emojis" ||
     pathname === "/profile/my-collections"
   ) {
@@ -31,9 +29,7 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/create",
     "/admin/:path*",
-    "/mine/works/:path*",
     "/mine/my-emojis",
     "/profile/my-collections",
     "/explore/:path*",

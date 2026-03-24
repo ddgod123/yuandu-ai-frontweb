@@ -121,8 +121,8 @@ function buildImageCandidates(rawUrl: string): string[] {
   // 开发阶段默认优先走后端 storage proxy，避免依赖未备案/冻结域名。
   add(proxyCandidate);
 
-  const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
-  const preferHttps = protocol === "https:";
+  // 避免 SSR/CSR 首帧因 window 协议差异导致 hydration mismatch。
+  const preferHttps = true;
 
   if (trimmed.startsWith("//")) {
     const httpsURL = `https:${trimmed}`;
@@ -153,8 +153,7 @@ function buildImageCandidates(rawUrl: string): string[] {
   }
 
   if (trimmed.startsWith("/")) {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    add(origin ? `${origin}${trimmed}` : trimmed);
+    add(trimmed);
     add(proxyCandidate);
     return candidates;
   }

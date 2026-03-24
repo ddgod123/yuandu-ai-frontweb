@@ -1,6 +1,6 @@
 import Link from "next/link";
-import Image from "next/image";
 import CollectionPreviewGrid from "@/components/categories/CollectionPreviewGrid";
+import SmartImage from "@/components/common/SmartImage";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 const PREVIEW_COUNT = 15;
@@ -193,22 +193,29 @@ export default async function Page({
           </Link>
           <div className="mt-6 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-col gap-6 md:flex-row md:items-center">
-            <div className="h-28 w-28 overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm">
-              {ip?.cover_url ? (
-                <Image src={ip.cover_url} alt={ip.name} width={112} height={112} unoptimized className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-3xl font-black text-slate-300">
-                  {ip?.name?.slice(0, 1) || "IP"}
-                </div>
-              )}
-            </div>
-            <div>
-              <div className="text-3xl font-black text-slate-900">{ip?.name || "IP 专题"}</div>
-              <div className="mt-2 text-sm text-slate-500">{ip?.description || "暂无简介"}</div>
-              <div className="mt-3 text-xs font-semibold text-slate-400">
-                共 {total} 个合集
+              <div className="h-28 w-28 overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm">
+                {ip?.cover_url ? (
+                  <div className="relative h-full w-full">
+                    <SmartImage
+                      url={ip.cover_url}
+                      alt={ip.name}
+                      className="object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-3xl font-black text-slate-300">
+                    {ip?.name?.slice(0, 1) || "IP"}
+                  </div>
+                )}
               </div>
-            </div>
+              <div>
+                <div className="text-3xl font-black text-slate-900">{ip?.name || "IP 专题"}</div>
+                <div className="mt-2 text-sm text-slate-500">{ip?.description || "暂无简介"}</div>
+                <div className="mt-3 text-xs font-semibold text-slate-400">
+                  共 {total} 个合集
+                </div>
+              </div>
             </div>
             <div className="flex items-center gap-2 text-xs font-semibold">
               <Link
