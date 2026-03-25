@@ -14,6 +14,7 @@ type IPItem = {
   name: string;
   slug: string;
   cover_url?: string;
+  cover_thumb_url?: string;
   description?: string;
   collection_count?: number;
 };
@@ -182,10 +183,10 @@ export default function TrendingPage() {
                   className="group overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
                 >
                   <div className="h-40 bg-gradient-to-b from-emerald-50/60 to-slate-50">
-                    {ip.cover_url ? (
+                    {ip.cover_thumb_url || ip.cover_url ? (
                       <div className="relative h-full w-full">
                         <SmartImage
-                          url={ip.cover_url}
+                          url={ip.cover_thumb_url || ip.cover_url}
                           alt={ip.name}
                           className="object-cover transition duration-300 group-hover:scale-105"
                           loading="lazy"

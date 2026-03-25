@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { getLegalContactInfo, LEGAL_META } from "@/lib/legal";
 
-export default function DisclaimerPage() {
+export default async function DisclaimerPage() {
+  const { complaintEmail, contactEmail } = await getLegalContactInfo();
+
   return (
     <main className="min-h-screen bg-slate-50 py-12">
       <div className="mx-auto max-w-4xl px-6">
@@ -8,7 +11,7 @@ export default function DisclaimerPage() {
           <div className="mb-8">
             <h1 className="text-3xl font-black tracking-tight text-slate-900">免责声明</h1>
             <p className="mt-2 text-sm text-slate-500">
-              版本 v1.0 · 生效日期：2026-03-05 · 更新日期：2026-03-05
+              版本 {LEGAL_META.version} · 生效日期：{LEGAL_META.effectiveDate} · 更新日期：{LEGAL_META.updatedDate}
             </p>
           </div>
 
@@ -20,7 +23,7 @@ export default function DisclaimerPage() {
             <h2>1. 内容来源与权利声明</h2>
             <ol>
               <li>平台部分内容来自互联网公开信息整理、用户提交、合作授权或平台原创。</li>
-              <li>我们尊重并保护知识产权，权利人可通过联系邮箱提交通知，我们将依法处理。</li>
+              <li>我们尊重并保护知识产权，权利人可通过投诉邮箱 {complaintEmail} 提交通知，我们将依法处理。</li>
               <li>平台不因内容展示即当然获得或授予该内容的完整商业权利。</li>
             </ol>
 
@@ -63,8 +66,9 @@ export default function DisclaimerPage() {
             <p>本免责声明是《用户协议》的组成部分，与《隐私政策》共同构成平台规则体系。若条款冲突，以法律法规强制性规定为准。</p>
 
             <h2>8. 联系方式</h2>
-            <p>运营主体： 【北京元都致远科技有限公司】</p>
-            <p>联系邮箱： 【3909356254@qq.com】</p>
+            <p>运营主体： 【{LEGAL_META.operatorName}】</p>
+            <p>联系邮箱： 【{contactEmail}】</p>
+            <p>版权投诉邮箱： 【{complaintEmail}】</p>
           </article>
 
           <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-6 text-xs">

@@ -19,6 +19,7 @@ type ApiCollection = {
   title: string;
   cover_url?: string;
   preview_images?: string[];
+  preview_assets?: ApiPreviewAsset[];
   file_count?: number;
   creator_name?: string;
   creator_name_zh?: string;
@@ -27,6 +28,13 @@ type ApiCollection = {
   favorite_count?: number;
   like_count?: number;
   download_count?: number;
+};
+
+type ApiPreviewAsset = {
+  static_url?: string;
+  animated_url?: string;
+  is_animated?: boolean;
+  format?: string;
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -47,6 +55,7 @@ type CollectionCard = {
   likeCount: number;
   downloadCount: number;
   previewImages: string[];
+  previewAssets: { staticUrl: string; animatedUrl?: string; isAnimated?: boolean }[];
 };
 
 function isGifUrl(value: string) {
@@ -64,11 +73,12 @@ function buildStaticPreview(url: string) {
   return `${val}${separator}imageMogr2/format/png`;
 }
 
-function normalizePreviewUrl(raw: string) {
+function normalizePreviewUrl(raw: string, options?: { staticForGif?: boolean }) {
   const trimmed = (raw || "").trim();
   if (!trimmed) return "";
   if (!isImageFile(trimmed)) return "";
-  if (isGifUrl(trimmed)) return buildStaticPreview(trimmed);
+  const staticForGif = options?.staticForGif ?? true;
+  if (staticForGif && isGifUrl(trimmed)) return buildStaticPreview(trimmed);
   return trimmed;
 }
 
@@ -160,6 +170,24 @@ export default async function Page({
   const pagination = buildPagination(currentPage, totalPages);
 
   const cards: CollectionCard[] = collections.map((item) => {
+    const previewAssets = Array.isArray(item.preview_assets)
+      ? item.preview_assets
+          .map((asset) => {
+            const staticURL = normalizePreviewUrl(asset.static_url || "", { staticForGif: true });
+            const animatedURL = normalizePreviewUrl(asset.animated_url || "", { staticForGif: false });
+            if (!staticURL && !animatedURL) {
+              return null;
+            }
+            return {
+              staticUrl: staticURL || animatedURL,
+              animatedUrl: animatedURL || undefined,
+              isAnimated: Boolean(asset.is_animated),
+            };
+          })
+          .filter((asset): asset is { staticUrl: string; animatedUrl?: string; isAnimated?: boolean } => Boolean(asset))
+          .slice(0, PREVIEW_COUNT)
+      : [];
+
     const previews = Array.isArray(item.preview_images)
       ? item.preview_images
           .map((url) => normalizePreviewUrl(url || ""))
@@ -167,7 +195,14 @@ export default async function Page({
           .slice(0, PREVIEW_COUNT)
       : [];
     const coverFallback = normalizePreviewUrl(item.cover_url || "");
-    const previewImages = previews.length > 0 ? previews : coverFallback ? [coverFallback] : [];
+    const previewImages =
+      previews.length > 0
+        ? previews
+        : previewAssets.length > 0
+        ? previewAssets.map((asset) => asset.staticUrl)
+        : coverFallback
+        ? [coverFallback]
+        : [];
     const authorName =
       item.creator_name || item.creator_name_zh || item.creator_name_en || "官方";
     const authorAvatar = item.creator_avatar_url || DEFAULT_CREATOR_AVATAR;
@@ -181,6 +216,7 @@ export default async function Page({
       likeCount: Number(item.like_count) || 0,
       downloadCount: Number(item.download_count) || 0,
       previewImages,
+      previewAssets,
     };
   });
 

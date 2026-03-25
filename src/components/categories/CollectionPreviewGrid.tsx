@@ -6,6 +6,12 @@ import { Heart, Bookmark, Download, Layers } from "lucide-react";
 import SmartImage from "@/components/common/SmartImage";
 import { isImageFile } from "@/lib/image-candidates";
 
+export type CollectionPreviewAsset = {
+  staticUrl: string;
+  animatedUrl?: string;
+  isAnimated?: boolean;
+};
+
 interface CollectionCard {
   id: number;
   title: string;
@@ -16,12 +22,14 @@ interface CollectionCard {
   downloadCount: number;
   likeCount: number;
   previewImages: string[];
+  previewAssets?: CollectionPreviewAsset[];
 }
 
 type CollectionPreviewGridProps = {
   collections: CollectionCard[];
   loading?: boolean;
   previewCount?: number;
+  motionEnabled?: boolean;
 };
 
 const DEFAULT_PREVIEW_GRID_SIZE = 15;
@@ -30,10 +38,12 @@ function CollectionCardItem({
   item,
   index,
   previewCount,
+  motionEnabled,
 }: {
   item: CollectionCard;
   index: number;
   previewCount: number;
+  motionEnabled: boolean;
 }) {
   const cardRef = useRef<HTMLAnchorElement | null>(null);
   const columns = previewCount <= 9 ? 3 : 5;
@@ -63,7 +73,31 @@ function CollectionCardItem({
     return () => observer.disconnect();
   }, [loadAllPreviews]);
 
-  const normalized = item.previewImages.filter((img) => isImageFile(img)).slice(0, previewCount);
+  const normalizedAssets = (item.previewAssets || [])
+    .map((asset) => {
+      const staticUrl = (asset.staticUrl || "").trim();
+      const animatedUrl = (asset.animatedUrl || "").trim();
+      const staticValid = isImageFile(staticUrl);
+      const animatedValid = isImageFile(animatedUrl);
+      if (!staticValid && !animatedValid) {
+        return null;
+      }
+      return {
+        staticUrl: staticValid ? staticUrl : animatedUrl,
+        animatedUrl: animatedValid ? animatedUrl : "",
+        isAnimated: Boolean(asset.isAnimated),
+      };
+    })
+    .filter((asset): asset is { staticUrl: string; animatedUrl: string; isAnimated: boolean } => Boolean(asset))
+    .slice(0, previewCount);
+
+  const normalized =
+    normalizedAssets.length > 0
+      ? normalizedAssets.map((asset) =>
+          motionEnabled && asset.isAnimated && asset.animatedUrl ? asset.animatedUrl : asset.staticUrl
+        )
+      : item.previewImages.filter((img) => isImageFile(img)).slice(0, previewCount);
+
   const visibleLimit = loadAllPreviews ? previewCount : eagerCount;
   const previewImages = normalized.slice(0, visibleLimit);
   while (previewImages.length < previewCount) {
@@ -96,6 +130,7 @@ function CollectionCardItem({
                   url={img}
                   alt={`preview-${idx}`}
                   loading={index < 3 && idx < eagerCount ? "eager" : "lazy"}
+                  preferProxy={false}
                   className="absolute inset-0 h-full w-full object-cover"
                   fallbackClassName="h-full w-full bg-white/50"
                 />
@@ -156,6 +191,7 @@ export default function CollectionPreviewGrid({
   collections,
   loading = false,
   previewCount = DEFAULT_PREVIEW_GRID_SIZE,
+  motionEnabled = false,
 }: CollectionPreviewGridProps) {
   const gridColumns = previewCount <= 9 ? 3 : 5;
   const gridRows = Math.ceil(previewCount / gridColumns);
@@ -208,6 +244,7 @@ export default function CollectionPreviewGrid({
           item={item}
           index={index}
           previewCount={previewCount}
+          motionEnabled={motionEnabled}
         />
       ))}
     </div>

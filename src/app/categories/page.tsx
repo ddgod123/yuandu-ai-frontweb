@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import CollectionPreviewGrid from "@/components/categories/CollectionPreviewGrid";
-import { Filter, ChevronDown, LayoutGrid, List, Search } from "lucide-react";
+import { Filter, ChevronDown } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 const DESKTOP_PREVIEW_COUNT = 15;
@@ -10,6 +10,7 @@ const MOBILE_PREVIEW_COUNT = 9;
 const MOBILE_BREAKPOINT = 768;
 const PAGE_SIZE = 12;
 const DEFAULT_CREATOR_AVATAR = "https://api.dicebear.com/7.x/avataaars/svg?seed=creator-default";
+const MOTION_PREF_STORAGE_KEY = "emoji:categories:motion-preview-enabled";
 
 type ApiCategory = {
   id: number;
@@ -35,6 +36,7 @@ type ApiCollection = {
   title: string;
   cover_url?: string;
   preview_images?: string[];
+  preview_assets?: ApiPreviewAsset[];
   owner_id?: number;
   category_id?: number | null;
   file_count?: number;
@@ -46,6 +48,13 @@ type ApiCollection = {
   favorite_count?: number;
   like_count?: number;
   download_count?: number;
+};
+
+type ApiPreviewAsset = {
+  static_url?: string;
+  animated_url?: string;
+  is_animated?: boolean;
+  format?: string;
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
@@ -66,6 +75,7 @@ type CollectionCard = {
   likeCount: number;
   downloadCount: number;
   previewImages: string[];
+  previewAssets: { staticUrl: string; animatedUrl?: string; isAnimated?: boolean }[];
 };
 
 type SortOption = {
@@ -99,36 +109,6 @@ const MEDIA_FILTER_OPTIONS: MediaFilterOption[] = [
 
 type CategoryKey = "all" | string;
 
-function findIPRootCategory(categories: ApiCategory[]) {
-  const topCategories = categories.filter((item) => !item.parent_id);
-  if (!topCategories.length) return null;
-
-  const scoreCategory = (item: ApiCategory) => {
-    const name = (item.name || "").trim();
-    const slug = (item.slug || "").trim();
-    const compactName = name.replace(/\s+/g, "");
-    const compactSlug = slug.toLowerCase().replace(/[-_\s]+/g, "");
-
-    if (name === "IP人物" || compactName === "IP人物" || compactName.toLowerCase() === "ip人物") return 100;
-    if (/ip/i.test(name) && name.includes("人物")) return 80;
-    if (compactName.includes("IP") && compactName.includes("人物")) return 70;
-    if (compactSlug === "ip人物" || compactSlug === "ippeople" || compactSlug === "ipcharacter") return 60;
-    if (slug.toLowerCase().includes("ip") && name.includes("人物")) return 50;
-    return -1;
-  };
-
-  const sorted = [...topCategories].sort((a, b) => {
-    const scoreDiff = scoreCategory(b) - scoreCategory(a);
-    if (scoreDiff !== 0) return scoreDiff;
-    const sortA = typeof a.sort === "number" ? a.sort : 0;
-    const sortB = typeof b.sort === "number" ? b.sort : 0;
-    if (sortA !== sortB) return sortA - sortB;
-    return a.id - b.id;
-  });
-
-  return scoreCategory(sorted[0]) >= 0 ? sorted[0] : null;
-}
-
 function isGifUrl(value: string) {
   const clean = value.split("?")[0].split("#")[0].toLowerCase();
   return clean.endsWith(".gif");
@@ -150,11 +130,12 @@ function buildStaticPreview(url: string) {
   return `${val}${separator}imageMogr2/format/png`;
 }
 
-function normalizePreviewUrl(raw: string) {
+function normalizePreviewUrl(raw: string, options?: { staticForGif?: boolean }) {
   const trimmed = (raw || "").trim();
   if (!trimmed) return "";
   if (!isImageFile(trimmed)) return "";
-  if (isGifUrl(trimmed)) {
+  const staticForGif = options?.staticForGif ?? true;
+  if (staticForGif && isGifUrl(trimmed)) {
     return buildStaticPreview(trimmed);
   }
   return trimmed;
@@ -172,6 +153,7 @@ export default function CategoriesPage() {
   const [selectedSortID, setSelectedSortID] = useState<string>(SORT_OPTIONS[0].id);
   const [selectedMediaType, setSelectedMediaType] = useState<MediaFilterOption["id"]>("all");
   const [previewCount, setPreviewCount] = useState(DESKTOP_PREVIEW_COUNT);
+  const [motionEnabled, setMotionEnabled] = useState(false);
 
   const selectedSort = useMemo(
     () => SORT_OPTIONS.find((item) => item.id === selectedSortID) || SORT_OPTIONS[0],
@@ -188,6 +170,23 @@ export default function CategoriesPage() {
     return () => {
       window.removeEventListener("resize", updatePreviewCount);
     };
+  }, []);
+
+  useEffect(() => {
+    let nextEnabled = false;
+    try {
+      const saved = window.localStorage.getItem(MOTION_PREF_STORAGE_KEY);
+      if (saved === "1") {
+        nextEnabled = true;
+      } else if (saved === "0") {
+        nextEnabled = false;
+      } else {
+        nextEnabled = false;
+      }
+    } catch {
+      nextEnabled = false;
+    }
+    setMotionEnabled(nextEnabled);
   }, []);
 
   const topCategories = useMemo(() => {
@@ -219,7 +218,10 @@ export default function CategoriesPage() {
     const controller = new AbortController();
     const loadCategories = async () => {
       try {
-        const res = await fetch(`${API_BASE}/categories`, { signal: controller.signal });
+        const res = await fetch(`${API_BASE}/categories`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
         if (!res.ok) {
           return;
         }
@@ -227,9 +229,6 @@ export default function CategoriesPage() {
         if (!Array.isArray(data)) {
           return;
         }
-
-        const ipRoot = findIPRootCategory(data);
-        const ipRootID = ipRoot ? String(ipRoot.id) : null;
 
         // 构建层级结构
         const categoryMap = new Map<string, CategoryOption>();
@@ -252,7 +251,7 @@ export default function CategoriesPage() {
           if (category.parentId && categoryMap.has(category.parentId)) {
             const parent = categoryMap.get(category.parentId)!;
             parent.children!.push(category);
-          } else if (!category.parentId && category.id !== ipRootID) {
+          } else if (!category.parentId) {
             rootCategories.push(category);
           }
         });
@@ -331,6 +330,7 @@ export default function CategoriesPage() {
         }
         const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
           signal: controller.signal,
+          cache: "no-store",
         });
         if (!res.ok) {
           throw new Error("failed");
@@ -340,6 +340,24 @@ export default function CategoriesPage() {
         const totalCount = typeof payload.total === "number" ? payload.total : items.length;
 
         const cards = items.map((item) => {
+          const previewAssets = Array.isArray(item.preview_assets)
+            ? item.preview_assets
+                .map((asset) => {
+                  const staticURL = normalizePreviewUrl(asset.static_url || "", { staticForGif: true });
+                  const animatedURL = normalizePreviewUrl(asset.animated_url || "", { staticForGif: false });
+                  if (!staticURL && !animatedURL) {
+                    return null;
+                  }
+                  return {
+                    staticUrl: staticURL || animatedURL,
+                    animatedUrl: animatedURL || undefined,
+                    isAnimated: Boolean(asset.is_animated),
+                  };
+                })
+                .filter((asset): asset is { staticUrl: string; animatedUrl?: string; isAnimated?: boolean } => Boolean(asset))
+                .slice(0, previewCount)
+            : [];
+
           const previews = Array.isArray(item.preview_images)
             ? item.preview_images
                 .map((u) => normalizePreviewUrl(u || ""))
@@ -347,7 +365,14 @@ export default function CategoriesPage() {
                 .slice(0, previewCount)
             : [];
           const coverFallback = normalizePreviewUrl(item.cover_url || "");
-          const previewImages = previews.length > 0 ? previews : coverFallback ? [coverFallback] : [];
+          const previewImages =
+            previews.length > 0
+              ? previews
+              : previewAssets.length > 0
+              ? previewAssets.map((asset) => asset.staticUrl)
+              : coverFallback
+              ? [coverFallback]
+              : [];
           const authorName =
             item.creator_name || item.creator_name_zh || item.creator_name_en || "官方";
           const authorAvatar = item.creator_avatar_url || DEFAULT_CREATOR_AVATAR;
@@ -361,6 +386,7 @@ export default function CategoriesPage() {
             likeCount: Number(item.like_count) || 0,
             downloadCount: Number(item.download_count) || 0,
             previewImages,
+            previewAssets,
           };
         });
 
@@ -486,7 +512,7 @@ export default function CategoriesPage() {
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3">
                   <div className="relative group">
                     <Filter
                       size={14}
@@ -526,6 +552,27 @@ export default function CategoriesPage() {
                       </button>
                     ))}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextValue = !motionEnabled;
+                      setMotionEnabled(nextValue);
+                      try {
+                        window.localStorage.setItem(MOTION_PREF_STORAGE_KEY, nextValue ? "1" : "0");
+                      } catch {
+                        // ignore localStorage exceptions
+                      }
+                    }}
+                    className={`h-10 rounded-xl border px-3 text-xs font-bold transition ${
+                      motionEnabled
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                    }`}
+                    aria-pressed={motionEnabled}
+                  >
+                    动效预览：{motionEnabled ? "开" : "关"}
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -563,6 +610,7 @@ export default function CategoriesPage() {
           collections={collections}
           loading={loadingCollections}
           previewCount={previewCount}
+          motionEnabled={motionEnabled}
         />
 
         {totalPages > 1 ? (

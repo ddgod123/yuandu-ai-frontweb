@@ -11,6 +11,7 @@ type SmartImageProps = {
   loading?: "lazy" | "eager";
   priority?: boolean;
   fallbackClassName?: string;
+  preferProxy?: boolean;
 };
 
 export default function SmartImage({
@@ -20,8 +21,12 @@ export default function SmartImage({
   loading = "lazy",
   priority = false,
   fallbackClassName = "h-full w-full bg-slate-100",
+  preferProxy = true,
 }: SmartImageProps) {
-  const candidates = useMemo(() => buildImageCandidates((url || "").trim()), [url]);
+  const candidates = useMemo(
+    () => buildImageCandidates((url || "").trim(), { preferProxy }),
+    [url, preferProxy]
+  );
   const [index, setIndex] = useState(0);
   const src = candidates[index];
 

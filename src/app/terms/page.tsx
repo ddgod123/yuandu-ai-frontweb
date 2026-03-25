@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { getLegalContactInfo, LEGAL_META } from "@/lib/legal";
 
-export default function TermsPage() {
+export default async function TermsPage() {
+  const { siteName, contactEmail, complaintEmail } = await getLegalContactInfo();
+
   return (
     <main className="min-h-screen bg-slate-50 py-12">
       <div className="mx-auto max-w-4xl px-6">
@@ -8,13 +11,13 @@ export default function TermsPage() {
           <div className="mb-8">
             <h1 className="text-3xl font-black tracking-tight text-slate-900">用户协议</h1>
             <p className="mt-2 text-sm text-slate-500">
-              版本 v1.0 · 生效日期：2026-03-05 · 更新日期：2026-03-05
+              版本 {LEGAL_META.version} · 生效日期：{LEGAL_META.effectiveDate} · 更新日期：{LEGAL_META.updatedDate}
             </p>
           </div>
 
           <article className="prose prose-slate max-w-none text-sm leading-7">
             <p>
-              本协议由【运营主体全称】（以下简称“我们”）与使用“表情包档案馆”网站、
+              本协议由【{LEGAL_META.operatorName}】（以下简称“我们”）与使用“{siteName}”网站、
               App、小程序及相关服务的用户（以下简称“你”）共同缔结。
             </p>
             <p>当你完成注册、登录或继续使用本服务，即视为你已阅读、理解并同意本协议及相关规则。</p>
@@ -62,7 +65,7 @@ export default function TermsPage() {
 
             <h2>6. 侵权投诉与处理</h2>
             <ol>
-              <li>若你认为平台内容侵犯你的合法权益，可提交权属证明、身份证明、侵权链接及说明材料至联系邮箱。</li>
+              <li>若你认为平台内容侵犯你的合法权益，可提交权属证明、身份证明、侵权链接及说明材料至投诉邮箱 {complaintEmail}。</li>
               <li>我们将在收到合格材料后进行审查，并视情况采取删除、屏蔽、断链、限制传播等措施。</li>
               <li>你应对投诉材料真实性、合法性负责；恶意投诉造成损失的，应承担相应责任。</li>
             </ol>
@@ -101,12 +104,13 @@ export default function TermsPage() {
             <h2>12. 适用法律与争议解决</h2>
             <ol>
               <li>本协议适用中华人民共和国大陆地区法律。</li>
-              <li>因本协议产生的争议，双方应先友好协商；协商不成的，提交【运营主体所在地】有管辖权的人民法院诉讼解决。</li>
+              <li>因本协议产生的争议，双方应先友好协商；协商不成的，提交运营主体住所地有管辖权的人民法院诉讼解决。</li>
             </ol>
 
             <h2>13. 联系方式</h2>
-            <p>运营主体： 【北京元都致远科技有限公司】</p>
-            <p>联系邮箱： 【3909356254@qq.com】</p>
+            <p>运营主体： 【{LEGAL_META.operatorName}】</p>
+            <p>联系邮箱： 【{contactEmail}】</p>
+            <p>版权投诉邮箱： 【{complaintEmail}】</p>
           </article>
 
           <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-6 text-xs">

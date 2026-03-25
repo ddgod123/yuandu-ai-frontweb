@@ -1,8 +1,18 @@
-"use client";
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+
+type FooterSelfMediaItem = {
+  key: string;
+  name: string;
+  logo: string;
+  logo_url: string;
+  qr_code: string;
+  qr_code_url: string;
+  profile_link: string;
+  enabled: boolean;
+  sort: number;
+};
 
 type FooterSetting = {
   siteName: string;
@@ -13,6 +23,7 @@ type FooterSetting = {
   selfMediaLogoURL: string;
   selfMediaQRCode: string;
   selfMediaQRCodeURL: string;
+  selfMediaItems: FooterSelfMediaItem[];
   icpNumber: string;
   icpLink: string;
   publicSecurityNumber: string;
@@ -26,12 +37,13 @@ const DEFAULT_SETTING: FooterSetting = {
   siteName: "表情包档案馆",
   siteDescription:
     "致力于收集、整理和分享互联网表情包资源。本站提供合集浏览、下载与收藏功能，服务于个人非商业交流场景。",
-  contactEmail: "contact@emoji-archive.com",
-  complaintEmail: "contact@emoji-archive.com",
+  contactEmail: "3909356254@qq.com",
+  complaintEmail: "3909356254@qq.com",
   selfMediaLogo: "",
   selfMediaLogoURL: "",
   selfMediaQRCode: "",
   selfMediaQRCodeURL: "",
+  selfMediaItems: [],
   icpNumber: "ICP备案号：待补充",
   icpLink: "",
   publicSecurityNumber: "公安备案号：待补充",
@@ -50,83 +62,126 @@ function isHTTPURL(value: string) {
   return /^https?:\/\//i.test(value.trim());
 }
 
-export default function Footer() {
-  const [setting, setSetting] = useState<FooterSetting>(DEFAULT_SETTING);
+function toInitial(name: string) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return "媒";
+  return trimmed.slice(0, 1).toUpperCase();
+}
+
+async function getFooterSetting(): Promise<FooterSetting> {
+  try {
+    const res = await fetch(`${API_BASE}/site-settings/footer`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return DEFAULT_SETTING;
+    }
+
+    const data = (await res.json()) as {
+      site_name?: string;
+      site_description?: string;
+      contact_email?: string;
+      complaint_email?: string;
+      self_media_logo?: string;
+      self_media_logo_url?: string;
+      self_media_qr_code?: string;
+      self_media_qr_code_url?: string;
+      self_media_items?: FooterSelfMediaItem[];
+      icp_number?: string;
+      icp_link?: string;
+      public_security_number?: string;
+      public_security_link?: string;
+      copyright_text?: string;
+    };
+
+    return normalizeSetting({
+      siteName: data.site_name || "",
+      siteDescription: data.site_description || "",
+      contactEmail: data.contact_email || "",
+      complaintEmail: data.complaint_email || "",
+      selfMediaLogo: data.self_media_logo || "",
+      selfMediaLogoURL: data.self_media_logo_url || "",
+      selfMediaQRCode: data.self_media_qr_code || "",
+      selfMediaQRCodeURL: data.self_media_qr_code_url || "",
+      selfMediaItems: Array.isArray(data.self_media_items) ? data.self_media_items : [],
+      icpNumber: data.icp_number || "",
+      icpLink: data.icp_link || "",
+      publicSecurityNumber: data.public_security_number || "",
+      publicSecurityLink: data.public_security_link || "",
+      copyrightText: data.copyright_text || "",
+    });
+  } catch {
+    return DEFAULT_SETTING;
+  }
+}
+
+function buildNormalizedMediaItems(setting: FooterSetting) {
+  const list = (setting.selfMediaItems || [])
+    .map((item, index) => {
+      const name = (item.name || "").trim() || "自媒体";
+      const logo = (item.logo || "").trim();
+      const qrCode = (item.qr_code || "").trim();
+      const logoURL = (item.logo_url || "").trim() || (isHTTPURL(logo) ? logo : "");
+      const qrCodeURL = (item.qr_code_url || "").trim() || (isHTTPURL(qrCode) ? qrCode : "");
+      const sort = Number(item.sort) > 0 ? Number(item.sort) : index + 1;
+
+      return {
+        key: (item.key || "").trim() || `item_${index + 1}`,
+        name,
+        logo,
+        logoURL,
+        qrCode,
+        qrCodeURL,
+        profileLink: (item.profile_link || "").trim(),
+        enabled: Boolean(item.enabled),
+        sort,
+      };
+    })
+    .filter((item) => item.enabled)
+    .sort((a, b) => a.sort - b.sort);
+
+  if (list.length > 0) {
+    return list;
+  }
+
+  const legacyLogo =
+    setting.selfMediaLogo.trim() || (isHTTPURL(setting.selfMediaLogo) ? setting.selfMediaLogo.trim() : "");
+  const legacyQRCode =
+    setting.selfMediaQRCodeURL.trim() || (isHTTPURL(setting.selfMediaQRCode) ? setting.selfMediaQRCode.trim() : "");
+  if (!legacyLogo && !legacyQRCode) {
+    return [];
+  }
+
+  return [
+    {
+      key: "qq",
+      name: "QQ",
+      logo: setting.selfMediaLogo,
+      logoURL: legacyLogo,
+      qrCode: setting.selfMediaQRCode,
+      qrCodeURL: legacyQRCode,
+      profileLink: "",
+      enabled: true,
+      sort: 1,
+    },
+  ];
+}
+
+export default async function Footer() {
+  const setting = await getFooterSetting();
   const currentYear = new Date().getFullYear();
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const loadSetting = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/site-settings/footer`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          return;
-        }
-        const data = (await res.json()) as {
-          site_name?: string;
-          site_description?: string;
-          contact_email?: string;
-          complaint_email?: string;
-          self_media_logo?: string;
-          self_media_logo_url?: string;
-          self_media_qr_code?: string;
-          self_media_qr_code_url?: string;
-          icp_number?: string;
-          icp_link?: string;
-          public_security_number?: string;
-          public_security_link?: string;
-          copyright_text?: string;
-        };
-        if (controller.signal.aborted) return;
-        setSetting(
-          normalizeSetting({
-            siteName: data.site_name || "",
-            siteDescription: data.site_description || "",
-            contactEmail: data.contact_email || "",
-            complaintEmail: data.complaint_email || "",
-            selfMediaLogo: data.self_media_logo || "",
-            selfMediaLogoURL: data.self_media_logo_url || "",
-            selfMediaQRCode: data.self_media_qr_code || "",
-            selfMediaQRCodeURL: data.self_media_qr_code_url || "",
-            icpNumber: data.icp_number || "",
-            icpLink: data.icp_link || "",
-            publicSecurityNumber: data.public_security_number || "",
-            publicSecurityLink: data.public_security_link || "",
-            copyrightText: data.copyright_text || "",
-          })
-        );
-      } catch {
-        // 保持默认配置兜底，避免接口失败导致底部不可用
-      }
-    };
-
-    loadSetting();
-
-    return () => {
-      controller.abort();
-    };
-  }, []);
-
   const contactEmail = setting.contactEmail.trim() || DEFAULT_SETTING.contactEmail;
   const complaintEmail = setting.complaintEmail.trim() || contactEmail;
   const icpNumber = setting.icpNumber.trim() || DEFAULT_SETTING.icpNumber;
   const publicSecurityNumber =
     setting.publicSecurityNumber.trim() || DEFAULT_SETTING.publicSecurityNumber;
   const copyrightText = setting.copyrightText.trim() || DEFAULT_SETTING.copyrightText;
-  const selfMediaLogoURL =
-    setting.selfMediaLogoURL.trim() ||
-    (isHTTPURL(setting.selfMediaLogo) ? setting.selfMediaLogo.trim() : "");
-  const selfMediaQRCodeURL =
-    setting.selfMediaQRCodeURL.trim() ||
-    (isHTTPURL(setting.selfMediaQRCode) ? setting.selfMediaQRCode.trim() : "");
+  const normalizedMediaItems = buildNormalizedMediaItems(setting);
 
   return (
     <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-6">
-        <div className="grid gap-10 py-12 md:grid-cols-5">
+        <div className="grid gap-10 py-12 md:grid-cols-4">
           <div className="md:col-span-2">
             <Link href="/" className="inline-flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-sm text-white shadow-lg shadow-emerald-200/60">
@@ -141,42 +196,6 @@ export default function Footer() {
                 {contactEmail}
               </a>
             </p>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-black tracking-wide text-slate-900">站点导航</h4>
-            <ul className="mt-4 space-y-2 text-sm text-slate-600">
-              <li>
-                <Link href="/" className="transition-colors hover:text-emerald-500">
-                  首页
-                </Link>
-              </li>
-              <li>
-                <Link href="/categories" className="transition-colors hover:text-emerald-500">
-                  表情包大全
-                </Link>
-              </li>
-              <li>
-                <Link href="/trending" className="transition-colors hover:text-emerald-500">
-                  表情包IP
-                </Link>
-              </li>
-              <li>
-                <Link href="/create" className="transition-colors hover:text-emerald-500">
-                  视频转图片
-                </Link>
-              </li>
-              <li>
-                <Link href="/mine/works" className="transition-colors hover:text-emerald-500">
-                  我的作品
-                </Link>
-              </li>
-              <li>
-                <Link href="/profile/favorites" className="transition-colors hover:text-emerald-500">
-                  我的收藏
-                </Link>
-              </li>
-            </ul>
           </div>
 
           <div>
@@ -212,29 +231,45 @@ export default function Footer() {
 
           <div>
             <h4 className="text-sm font-black tracking-wide text-slate-900">自媒体</h4>
-            <div className="mt-4 space-y-3 text-sm text-slate-600">
-              {selfMediaLogoURL ? (
-                <div className="flex items-center gap-2">
-                  <img
-                    src={selfMediaLogoURL}
-                    alt="自媒体 logo"
-                    className="h-10 w-10 rounded-xl border border-slate-200 object-cover"
-                  />
-                  <span className="text-xs text-slate-500">品牌 Logo</span>
-                </div>
-              ) : null}
+            <div className="mt-4">
+              {normalizedMediaItems.length > 0 ? (
+                <div className="flex flex-wrap items-start gap-3">
+                  {normalizedMediaItems.map((item) => {
+                    const trigger = (
+                      <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md">
+                        {item.logoURL ? (
+                          <img src={item.logoURL} alt={`${item.name} logo`} className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-black text-slate-500">{toInitial(item.name)}</span>
+                        )}
+                      </div>
+                    );
 
-              {selfMediaQRCodeURL ? (
-                <div className="inline-flex flex-col rounded-xl border border-slate-200 bg-slate-50 p-2">
-                  <img
-                    src={selfMediaQRCodeURL}
-                    alt="自媒体二维码"
-                    className="h-24 w-24 rounded-lg object-cover"
-                  />
-                  <span className="mt-2 text-center text-[11px] text-slate-500">扫码关注</span>
+                    return (
+                      <div key={item.key} className="group relative">
+                        {item.profileLink ? (
+                          <a href={item.profileLink} target="_blank" rel="noreferrer" aria-label={item.name}>
+                            {trigger}
+                          </a>
+                        ) : (
+                          <button type="button" className="cursor-default" aria-label={item.name}>
+                            {trigger}
+                          </button>
+                        )}
+                        <div className="mt-1 text-center text-[11px] text-slate-500">{item.name}</div>
+
+                        {item.qrCodeURL ? (
+                          <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-36 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-2 text-center opacity-0 shadow-xl transition-all duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                            <img src={item.qrCodeURL} alt={`${item.name} 二维码`} className="mx-auto h-28 w-28 rounded-lg object-cover" />
+                            <div className="mt-1 text-[11px] text-slate-500">扫码关注</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="text-xs text-slate-400">暂未配置二维码</div>
+                <div className="text-xs text-slate-400">暂未配置自媒体账号</div>
               )}
             </div>
           </div>

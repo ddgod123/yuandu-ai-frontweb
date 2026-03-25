@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { getLegalContactInfo, LEGAL_META } from "@/lib/legal";
 
-export default function PrivacyPage() {
+export default async function PrivacyPage() {
+  const { contactEmail, siteName } = await getLegalContactInfo();
+
   return (
     <main className="min-h-screen bg-slate-50 py-12">
       <div className="mx-auto max-w-4xl px-6">
@@ -8,13 +11,13 @@ export default function PrivacyPage() {
           <div className="mb-8">
             <h1 className="text-3xl font-black tracking-tight text-slate-900">隐私政策</h1>
             <p className="mt-2 text-sm text-slate-500">
-              版本 v1.0 · 生效日期：2026-03-05 · 更新日期：2026-03-05
+              版本 {LEGAL_META.version} · 生效日期：{LEGAL_META.effectiveDate} · 更新日期：{LEGAL_META.updatedDate}
             </p>
           </div>
 
           <article className="prose prose-slate max-w-none text-sm leading-7">
             <p>
-              我们遵循合法、正当、必要、诚信原则，仅为实现产品功能收集必要信息。
+              我们遵循合法、正当、必要、诚信原则，仅为实现 {siteName} 产品功能收集必要信息。
             </p>
 
             <h2>1. 我们如何收集和使用个人信息</h2>
@@ -99,8 +102,8 @@ export default function PrivacyPage() {
             </ol>
 
             <h2>9. 联系我们</h2>
-            <p>运营主体： 【北京元都致远科技有限公司】</p>
-            <p>联系邮箱： 【3909356254@qq.com】</p>
+            <p>运营主体： 【{LEGAL_META.operatorName}】</p>
+            <p>联系邮箱： 【{contactEmail}】</p>
             <p>如你认为我们的个人信息处理行为损害了你的合法权益，你也可向有管辖权的监管部门投诉举报。</p>
 
             <h2>10. 适用法律</h2>
