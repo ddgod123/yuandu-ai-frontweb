@@ -1212,11 +1212,18 @@ export default function CreatePage() {
       const key = makeVideoKey(file.name);
       const step2 = appendTimeline({ role: "assistant", level: "info", text: "步骤 2/4：申请上传凭证..." });
 
-      const tokenRes = await fetchWithAuthRetry(`${API_BASE}/storage/upload-token`, {
+      let tokenRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs/upload-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, insert_only: true }),
       });
+      if (tokenRes.status === 404) {
+        tokenRes = await fetchWithAuthRetry(`${API_BASE}/storage/upload-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, insert_only: true }),
+        });
+      }
       if (tokenRes.status === 401) {
         clearAuthSession();
         setIsAuthed(false);
