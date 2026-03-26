@@ -277,7 +277,7 @@ function executionLaneLabel(raw: unknown) {
     case "video_gif":
       return "GIF 专线";
     case "video_png":
-      return "PNG/JPG 专线";
+      return "PNG 专线";
     case "media":
       return "通用专线";
     default:
