@@ -110,6 +110,20 @@ type VideoJobEventListResponse = {
   next_since_id?: number;
 };
 
+type VideoJobAI1DebugResponse = {
+  job_id: number;
+  requested_format?: string;
+  flow_mode?: string;
+  stage?: string;
+  status?: string;
+  source_prompt?: string;
+  input?: Record<string, unknown>;
+  model_request?: Record<string, unknown>;
+  model_response?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  trace?: Record<string, unknown>;
+};
+
 type TimelineMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -243,6 +257,15 @@ function formatBytes(value?: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function prettyJSON(value: unknown) {
+  if (value === null || value === undefined) return "{}";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "{}";
+  }
 }
 
 function parseFormatList(raw: unknown) {
@@ -796,6 +819,10 @@ export default function CreatePage() {
   ]);
 
   const [activeJobID, setActiveJobID] = useState<number | null>(null);
+  const [ai1Debug, setAI1Debug] = useState<VideoJobAI1DebugResponse | null>(null);
+  const [loadingAI1Debug, setLoadingAI1Debug] = useState(false);
+  const [ai1DebugError, setAI1DebugError] = useState<string | null>(null);
+  const [ai1DebugTab, setAI1DebugTab] = useState<"normalized" | "request" | "response">("normalized");
   const [submitting, setSubmitting] = useState(false);
   const [confirmingContinue, setConfirmingContinue] = useState(false);
   // const [taskListCompact, setTaskListCompact] = useState(true);
@@ -827,6 +854,21 @@ export default function CreatePage() {
     if (!activeJob) return [];
     return resolveGeneratedFormats(activeJob);
   }, [activeJob]);
+  const ai1DebugOutput = useMemo(() => {
+    if (!ai1Debug || !ai1Debug.output || typeof ai1Debug.output !== "object") {
+      return { userReply: {}, ai2Instruction: {} };
+    }
+    const output = ai1Debug.output as Record<string, unknown>;
+    const userReply =
+      output.user_reply && typeof output.user_reply === "object"
+        ? (output.user_reply as Record<string, unknown>)
+        : {};
+    const ai2Instruction =
+      output.ai2_instruction && typeof output.ai2_instruction === "object"
+        ? (output.ai2_instruction as Record<string, unknown>)
+        : {};
+    return { userReply, ai2Instruction };
+  }, [ai1Debug]);
 
   const appendTimeline = useCallback((input: TimelineMessageInput) => {
     const id = input.id || createMessageID();
@@ -959,6 +1001,39 @@ export default function CreatePage() {
     },
     [syncOneJob]
   );
+
+  const loadAI1Debug = useCallback(async (jobID: number, silent = false) => {
+    if (!jobID) return;
+    if (!silent) {
+      setLoadingAI1Debug(true);
+      setAI1DebugError(null);
+    }
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/ai1-debug`);
+      if (res.status === 401) {
+        clearAuthSession();
+        setIsAuthed(false);
+        setAI1Debug(null);
+        return;
+      }
+      if (res.status === 404) {
+        setAI1Debug(null);
+        return;
+      }
+      if (!res.ok) {
+        throw new Error((await res.text()) || "加载 AI1 调试信息失败");
+      }
+      const data = (await res.json()) as VideoJobAI1DebugResponse;
+      setAI1Debug(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "加载 AI1 调试信息失败";
+      setAI1DebugError(msg);
+    } finally {
+      if (!silent) {
+        setLoadingAI1Debug(false);
+      }
+    }
+  }, []);
 
   const loadJobEvents = useCallback(
     async (jobID: number, reset = false) => {
@@ -1360,6 +1435,8 @@ export default function CreatePage() {
 
     if (announcedActiveJobRef.current !== activeJobID) {
       announcedActiveJobRef.current = activeJobID;
+      setAI1Debug(null);
+      setAI1DebugError(null);
       appendTimeline({
         role: "assistant",
         name: "系统",
@@ -1367,12 +1444,13 @@ export default function CreatePage() {
         text: `已切换到任务 #${activeJobID}，正在同步处理日志...`,
       });
       void loadJobEvents(activeJobID, true);
+      void loadAI1Debug(activeJobID);
     }
 
     let cancelled = false;
     const poll = async () => {
       if (cancelled) return;
-      await Promise.all([loadJobEvents(activeJobID, false), loadJobDetail(activeJobID)]);
+      await Promise.all([loadJobEvents(activeJobID, false), loadJobDetail(activeJobID), loadAI1Debug(activeJobID, true)]);
     };
 
     void poll();
@@ -1386,7 +1464,7 @@ export default function CreatePage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeJobID, appendTimeline, isAuthed, loadJobDetail, loadJobEvents]);
+  }, [activeJobID, appendTimeline, isAuthed, loadAI1Debug, loadJobDetail, loadJobEvents]);
 
   useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -1557,6 +1635,105 @@ export default function CreatePage() {
                   产出格式：{activeJobGeneratedFormats.length ? activeJobGeneratedFormats.map((it) => it.toUpperCase()).join(", ") : "-"}
                 </span>
               </div>
+              <details className="rounded-xl border border-slate-200 bg-white">
+                <summary className="cursor-pointer select-none list-none px-3 py-2 text-xs text-slate-600">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-700">AI1 调试视图</span>
+                    {loadingAI1Debug ? (
+                      <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-600">
+                        同步中
+                      </span>
+                    ) : null}
+                    {ai1Debug ? (
+                      <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">
+                        已获取
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500">
+                        暂无
+                      </span>
+                    )}
+                  </div>
+                </summary>
+                <div className="border-t border-slate-100 px-3 py-3">
+                  {ai1DebugError ? (
+                    <div className="mb-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
+                      {ai1DebugError}
+                    </div>
+                  ) : null}
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-[11px] text-slate-500">
+                      {ai1Debug ? (
+                        <>
+                          格式 {String(ai1Debug.requested_format || "-").toUpperCase()} · 流程 {ai1Debug.flow_mode || "-"} · 状态{" "}
+                          {ai1Debug.status || "-"}
+                          {ai1Debug.source_prompt ? ` · 提示词：${ai1Debug.source_prompt}` : ""}
+                        </>
+                      ) : (
+                        "AI1 数据尚未生成，可稍后刷新。"
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!activeJob?.id) return;
+                        void loadAI1Debug(activeJob.id);
+                      }}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                      disabled={loadingAI1Debug}
+                    >
+                      {loadingAI1Debug ? "刷新中..." : "刷新"}
+                    </button>
+                  </div>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => setAI1DebugTab("normalized")}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                        ai1DebugTab === "normalized"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-white text-slate-500"
+                      }`}
+                    >
+                      规范输出
+                    </button>
+                    <button
+                      onClick={() => setAI1DebugTab("request")}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                        ai1DebugTab === "request"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-white text-slate-500"
+                      }`}
+                    >
+                      POST 请求
+                    </button>
+                    <button
+                      onClick={() => setAI1DebugTab("response")}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                        ai1DebugTab === "response"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-white text-slate-500"
+                      }`}
+                    >
+                      模型返回
+                    </button>
+                  </div>
+                  <pre className="max-h-64 overflow-auto rounded-lg border border-slate-200 bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-100">
+                    {ai1DebugTab === "normalized"
+                      ? prettyJSON({
+                          user_reply: ai1DebugOutput.userReply,
+                          ai2_instruction: ai1DebugOutput.ai2Instruction,
+                        })
+                      : ai1DebugTab === "request"
+                        ? prettyJSON({
+                            input: ai1Debug?.input,
+                            model_request: ai1Debug?.model_request,
+                          })
+                        : prettyJSON({
+                            model_response: ai1Debug?.model_response,
+                            trace: ai1Debug?.trace,
+                          })}
+                  </pre>
+                </div>
+              </details>
               {activeJob.error_message ? (
                 <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                   错误：{activeJob.error_message}
