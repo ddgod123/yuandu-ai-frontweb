@@ -159,6 +159,35 @@ export default function Navbar() {
     });
   }, [pathname]);
 
+  const navItems = [
+    {
+      label: "首页",
+      href: "/",
+      match: (path: string) => path === "/",
+    },
+    {
+      label: "表情包大全",
+      href: "/categories",
+      match: (path: string) => path === "/categories" || path.startsWith("/categories/"),
+    },
+    {
+      label: "视频转图片",
+      href: "/create",
+      match: (path: string) => path === "/create" || path.startsWith("/create/"),
+    },
+    {
+      label: "我的作品",
+      href: "/mine/works",
+      match: (path: string) => path === "/mine/works" || path.startsWith("/mine/works/"),
+    },
+    {
+      label: "我的",
+      href: "/mine",
+      match: (path: string) =>
+        path === "/mine" || path.startsWith("/mine/favorites") || path.startsWith("/mine/my-emojis"),
+    },
+  ];
+
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-slate-100 bg-white/70 backdrop-blur-xl transition-all duration-300">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
@@ -179,17 +208,8 @@ export default function Navbar() {
           </Link>
 
           <div className="hidden items-center gap-1 md:flex">
-            {[
-              { label: "首页", href: "/" },
-              { label: "表情包大全", href: "/categories" },
-              { label: "表情包IP", href: "/trending" },
-              { label: "视频转图片", href: "/create" },
-              { label: "我的作品", href: "/mine/works" },
-              { label: "我的", href: "/mine" },
-            ].map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== "/" && pathname.startsWith(`${item.href}/`));
+            {navItems.map((item) => {
+              const isActive = item.match(pathname || "");
               return (
                 <Link
                   key={item.label}

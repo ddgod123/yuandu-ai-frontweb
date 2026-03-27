@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import CollectionPreviewGrid from "@/components/categories/CollectionPreviewGrid";
 import { Filter, ChevronDown } from "lucide-react";
 
@@ -21,6 +21,7 @@ type ApiCategory = {
   parent_id?: number | null;
   description?: string;
   sort?: number;
+  public_collection_count?: number;
 };
 
 type CategoryOption = {
@@ -29,6 +30,7 @@ type CategoryOption = {
   icon: string;
   parentId?: string | null;
   children?: CategoryOption[];
+  publicCollectionCount?: number;
 };
 
 type ApiCollection = {
@@ -141,10 +143,31 @@ function normalizePreviewUrl(raw: string, options?: { staticForGif?: boolean }) 
   return trimmed;
 }
 
+function getCategoryPublicCollectionCount(category: CategoryOption): number | null {
+  let known = false;
+  let total = 0;
+
+  if (typeof category.publicCollectionCount === "number") {
+    known = true;
+    total += Math.max(0, category.publicCollectionCount);
+  }
+
+  (category.children || []).forEach((child) => {
+    const childCount = getCategoryPublicCollectionCount(child);
+    if (typeof childCount === "number") {
+      known = true;
+      total += childCount;
+    }
+  });
+
+  return known ? total : null;
+}
+
 export default function CategoriesPage() {
   const [selectedTop, setSelectedTop] = useState<CategoryKey>(fallbackCategory.id);
   const [selectedChild, setSelectedChild] = useState<CategoryKey>(fallbackChild.id);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [categoryPublicCountFallback, setCategoryPublicCountFallback] = useState<Record<string, number>>({});
   const [collections, setCollections] = useState<CollectionCard[]>([]);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -189,9 +212,51 @@ export default function CategoriesPage() {
     setMotionEnabled(nextEnabled);
   }, []);
 
+  const resolveCategoryOwnPublicCount = useCallback(
+    (category: CategoryOption): number | null => {
+      if (typeof category.publicCollectionCount === "number") {
+        return Math.max(0, category.publicCollectionCount);
+      }
+      if (Object.prototype.hasOwnProperty.call(categoryPublicCountFallback, category.id)) {
+        return Math.max(0, categoryPublicCountFallback[category.id]);
+      }
+      return null;
+    },
+    [categoryPublicCountFallback]
+  );
+
+  const resolveCategoryAggregatePublicCount = useCallback(
+    (category: CategoryOption): number | null => {
+      let known = false;
+      let total = 0;
+
+      const ownCount = resolveCategoryOwnPublicCount(category);
+      if (typeof ownCount === "number") {
+        known = true;
+        total += ownCount;
+      }
+
+      (category.children || []).forEach((child) => {
+        const childCount = resolveCategoryAggregatePublicCount(child);
+        if (typeof childCount === "number") {
+          known = true;
+          total += childCount;
+        }
+      });
+
+      return known ? total : null;
+    },
+    [resolveCategoryOwnPublicCount]
+  );
+
   const topCategories = useMemo(() => {
-    return [fallbackCategory, ...categories];
-  }, [categories]);
+    const visibleTopCategories = categories.filter((category) => {
+      const count = resolveCategoryAggregatePublicCount(category);
+      if (count === null) return true;
+      return count >= 1;
+    });
+    return [fallbackCategory, ...visibleTopCategories];
+  }, [categories, resolveCategoryAggregatePublicCount]);
 
   const categoryMap = useMemo(() => {
     const map = new Map<string, CategoryOption>();
@@ -211,8 +276,79 @@ export default function CategoriesPage() {
 
   const childCategories = useMemo(() => {
     if (!selectedTopCategory) return [];
-    return selectedTopCategory.children || [];
-  }, [selectedTopCategory]);
+    const children = selectedTopCategory.children || [];
+    return children.filter((child) => {
+      const count = resolveCategoryOwnPublicCount(child);
+      if (count === null) return true;
+      return count >= 1;
+    });
+  }, [selectedTopCategory, resolveCategoryOwnPublicCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const allCategories: CategoryOption[] = [];
+    categories.forEach((top) => {
+      allCategories.push(top);
+      (top.children || []).forEach((child) => allCategories.push(child));
+    });
+
+    const needFallback = allCategories.filter((item) => typeof item.publicCollectionCount !== "number");
+    if (!needFallback.length) {
+      setCategoryPublicCountFallback({});
+      return;
+    }
+
+    const loadFallbackCounts = async () => {
+      const entries = await Promise.all(
+        needFallback.map(async (category) => {
+          try {
+            const params = new URLSearchParams();
+            params.set("page_size", "1");
+            params.set("page", "1");
+            params.set("category_id", category.id);
+            const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
+              cache: "no-store",
+            });
+            if (!res.ok) return [category.id, 0] as const;
+            const payload = (await res.json()) as { total?: number };
+            const totalCount = typeof payload.total === "number" ? payload.total : 0;
+            return [category.id, Math.max(0, totalCount)] as const;
+          } catch {
+            return [category.id, 0] as const;
+          }
+        })
+      );
+
+      if (cancelled) return;
+      const nextMap: Record<string, number> = {};
+      entries.forEach(([id, count]) => {
+        nextMap[id] = count;
+      });
+      setCategoryPublicCountFallback(nextMap);
+    };
+
+    void loadFallbackCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [categories]);
+
+  useEffect(() => {
+    if (selectedTop === "all") return;
+    const isVisible = topCategories.some((item) => item.id === selectedTop);
+    if (!isVisible) {
+      setSelectedTop("all");
+      setSelectedChild("all");
+    }
+  }, [selectedTop, topCategories]);
+
+  useEffect(() => {
+    if (selectedChild === "all") return;
+    const isVisible = childCategories.some((item) => item.id === selectedChild);
+    if (!isVisible) {
+      setSelectedChild("all");
+    }
+  }, [selectedChild, childCategories]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -242,6 +378,10 @@ export default function CategoriesPage() {
             icon: item.icon && item.icon.trim() !== "" ? item.icon : "🏷️",
             parentId: item.parent_id ? String(item.parent_id) : null,
             children: [],
+            publicCollectionCount:
+              typeof item.public_collection_count === "number"
+                ? item.public_collection_count
+                : undefined,
           };
           categoryMap.set(category.id, category);
         });
@@ -258,9 +398,17 @@ export default function CategoriesPage() {
 
         setCategories(rootCategories);
 
-        const topIds = new Set(rootCategories.map((item) => item.id));
+        const visibleTopIds = new Set(
+          rootCategories
+            .filter((item) => {
+              const count = getCategoryPublicCollectionCount(item);
+              if (count === null) return true;
+              return count >= 1;
+            })
+            .map((item) => item.id)
+        );
         setSelectedTop((prevTop) => {
-          if (prevTop !== "all" && !topIds.has(prevTop)) {
+          if (prevTop !== "all" && !visibleTopIds.has(prevTop)) {
             setSelectedChild("all");
             return "all";
           }
@@ -354,7 +502,12 @@ export default function CategoriesPage() {
                     isAnimated: Boolean(asset.is_animated),
                   };
                 })
-                .filter((asset): asset is { staticUrl: string; animatedUrl?: string; isAnimated?: boolean } => Boolean(asset))
+                .filter(
+                  (
+                    asset
+                  ): asset is { staticUrl: string; animatedUrl: string | undefined; isAnimated: boolean } =>
+                    Boolean(asset)
+                )
                 .slice(0, previewCount)
             : [];
 

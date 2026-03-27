@@ -184,7 +184,12 @@ export default async function Page({
               isAnimated: Boolean(asset.is_animated),
             };
           })
-          .filter((asset): asset is { staticUrl: string; animatedUrl?: string; isAnimated?: boolean } => Boolean(asset))
+          .filter(
+            (
+              asset
+            ): asset is { staticUrl: string; animatedUrl: string | undefined; isAnimated: boolean } =>
+              Boolean(asset)
+          )
           .slice(0, PREVIEW_COUNT)
       : [];
 

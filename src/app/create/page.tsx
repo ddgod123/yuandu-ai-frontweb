@@ -8,6 +8,9 @@ import {
   ensureAuthSession,
   fetchWithAuthRetry,
 } from "@/lib/auth-client";
+import { useJobStream, type JobStreamEnvelope } from "@/hooks/useJobStream";
+import { MessageRenderer } from "@/components/create/rich-message/MessageRenderer";
+import type { RichMessage, RichMessageAction } from "@/types/rich-message";
 
 type VideoJobItem = {
   id: number;
@@ -32,6 +35,7 @@ type VideoJobListResponse = {
 type UploadTokenResponse = {
   token: string;
   key?: string;
+  prefix?: string;
   up_host?: string;
 };
 
@@ -122,6 +126,14 @@ type VideoJobAI1DebugResponse = {
   model_response?: Record<string, unknown>;
   output?: Record<string, unknown>;
   trace?: Record<string, unknown>;
+};
+
+type AI1DebugTimelineStep = {
+  key: string;
+  title: string;
+  status: string;
+  summary: string;
+  details?: Record<string, unknown>;
 };
 
 type TimelineMessage = {
@@ -268,6 +280,15 @@ function prettyJSON(value: unknown) {
   }
 }
 
+function normalizeAI1DebugStepStatus(raw: string) {
+  return raw.trim().toLowerCase();
+}
+
+function isAI1DebugAnomalyStatus(raw: string) {
+  const value = normalizeAI1DebugStepStatus(raw);
+  return value === "error" || value === "repaired" || value === "warn";
+}
+
 function parseFormatList(raw: unknown) {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -301,6 +322,14 @@ function executionLaneLabel(raw: unknown) {
       return "GIF 专线";
     case "video_png":
       return "PNG 专线";
+    case "video_jpg":
+      return "JPG 专线";
+    case "video_webp":
+      return "WebP 专线";
+    case "video_live":
+      return "Live 专线";
+    case "video_mp4":
+      return "MP4 专线";
     case "media":
       return "通用专线";
     default:
@@ -492,6 +521,15 @@ function stringListFromAny(value: unknown) {
     out.push(trimmed);
   }
   return out;
+}
+
+function numberFromAny(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }
 
 function businessGoalLabel(value: string) {
@@ -822,9 +860,13 @@ export default function CreatePage() {
   const [ai1Debug, setAI1Debug] = useState<VideoJobAI1DebugResponse | null>(null);
   const [loadingAI1Debug, setLoadingAI1Debug] = useState(false);
   const [ai1DebugError, setAI1DebugError] = useState<string | null>(null);
-  const [ai1DebugTab, setAI1DebugTab] = useState<"normalized" | "request" | "response">("normalized");
+  const [ai1DebugTab, setAI1DebugTab] = useState<"timeline" | "normalized" | "request" | "response">("timeline");
+  const [ai1TimelineAnomalyOnly, setAI1TimelineAnomalyOnly] = useState(false);
+  const [ai1IssueCopyState, setAI1IssueCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
   const [confirmingContinue, setConfirmingContinue] = useState(false);
+  const [showTaskPanel, setShowTaskPanel] = useState(false);
+  const [showAI1DebugModal, setShowAI1DebugModal] = useState(false);
   // const [taskListCompact, setTaskListCompact] = useState(true);
 
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -856,7 +898,7 @@ export default function CreatePage() {
   }, [activeJob]);
   const ai1DebugOutput = useMemo(() => {
     if (!ai1Debug || !ai1Debug.output || typeof ai1Debug.output !== "object") {
-      return { userReply: {}, ai2Instruction: {} };
+      return { userReply: {}, ai2Instruction: {}, ai1OutputV2: {}, contractReport: {} };
     }
     const output = ai1Debug.output as Record<string, unknown>;
     const userReply =
@@ -867,8 +909,290 @@ export default function CreatePage() {
       output.ai2_instruction && typeof output.ai2_instruction === "object"
         ? (output.ai2_instruction as Record<string, unknown>)
         : {};
-    return { userReply, ai2Instruction };
+    const ai1OutputV2 =
+      output.ai1_output_v2 && typeof output.ai1_output_v2 === "object"
+        ? (output.ai1_output_v2 as Record<string, unknown>)
+        : {};
+    const trace = ai1Debug.trace && typeof ai1Debug.trace === "object" ? (ai1Debug.trace as Record<string, unknown>) : {};
+    const contractFromOutput =
+      output.contract_report && typeof output.contract_report === "object"
+        ? (output.contract_report as Record<string, unknown>)
+        : {};
+    const contractFromTrace =
+      trace.ai1_output_contract_v2 && typeof trace.ai1_output_contract_v2 === "object"
+        ? (trace.ai1_output_contract_v2 as Record<string, unknown>)
+        : {};
+    return {
+      userReply,
+      ai2Instruction,
+      ai1OutputV2,
+      contractReport: Object.keys(contractFromOutput).length ? contractFromOutput : contractFromTrace,
+    };
   }, [ai1Debug]);
+  const ai1DebugTimeline = useMemo<AI1DebugTimelineStep[]>(() => {
+    if (!ai1Debug) return [];
+    const trace = ai1Debug?.trace && typeof ai1Debug.trace === "object" ? (ai1Debug.trace as Record<string, unknown>) : {};
+    const rawTimeline = trace.timeline_v1;
+    if (Array.isArray(rawTimeline)) {
+      const fromServer = rawTimeline
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const row = item as Record<string, unknown>;
+          const key = typeof row.key === "string" ? row.key.trim() : "";
+          const title = typeof row.title === "string" ? row.title.trim() : "";
+          const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "pending";
+          const summary = typeof row.summary === "string" ? row.summary.trim() : "";
+          const details = row.details && typeof row.details === "object" ? (row.details as Record<string, unknown>) : undefined;
+          if (!key || !title) return null;
+          return { key, title, status, summary, details } as AI1DebugTimelineStep;
+        })
+        .filter((item): item is AI1DebugTimelineStep => Boolean(item));
+      if (fromServer.length) return fromServer;
+    }
+
+    const contractReport = ai1DebugOutput.contractReport || {};
+    const repaired = Boolean(contractReport.contract_repaired);
+    const valid = Boolean(contractReport.valid);
+    const requestStatus = typeof ai1Debug?.model_request?.request_status === "string"
+      ? ai1Debug.model_request.request_status.trim().toLowerCase()
+      : "";
+    const requestStepStatus = requestStatus === "error" ? "error" : "done";
+    const responseSummary = ai1Debug?.model_response?.response_summary_v2 as Record<string, unknown> | undefined;
+    const responseStatusRaw = typeof responseSummary?.request_status === "string" ? responseSummary.request_status : "";
+    const responseStepStatus = responseStatusRaw.trim().toLowerCase() === "error" ? "error" : "done";
+    const contractStatus = repaired ? "repaired" : valid ? "done" : "warn";
+    const finalStatus =
+      Object.keys(ai1DebugOutput.userReply || {}).length && Object.keys(ai1DebugOutput.ai2Instruction || {}).length
+        ? "done"
+        : "warn";
+
+    return [
+      {
+        key: "input",
+        title: "输入聚合（用户 + 视频 + 开发规则）",
+        status: "done",
+        summary: "已读取用户提示词、视频元数据和开发规则。",
+        details: ai1Debug?.input,
+      },
+      {
+        key: "model_request",
+        title: "POST 模型请求",
+        status: requestStepStatus,
+        summary: "已构建模型请求负载。",
+        details: ai1Debug?.model_request,
+      },
+      {
+        key: "model_response",
+        title: "模型响应解析",
+        status: responseStepStatus,
+        summary: "已解析模型返回和标准化结果。",
+        details: ai1Debug?.model_response,
+      },
+      {
+        key: "contract",
+        title: "AI1 协议校验与修复",
+        status: contractStatus,
+        summary: repaired ? "输出已自动修复并记录修复项。" : valid ? "输出通过契约校验。" : "输出存在契约风险。",
+        details: contractReport,
+      },
+      {
+        key: "final_output",
+        title: "最终输出（用户反馈 + AI2 指令）",
+        status: finalStatus,
+        summary: "已产出用户可读反馈与 AI2 可执行指令。",
+        details: {
+          user_reply: ai1DebugOutput.userReply,
+          ai2_instruction: ai1DebugOutput.ai2Instruction,
+        },
+      },
+    ];
+  }, [ai1Debug, ai1DebugOutput]);
+  const ai1DebugTimelineAnomalies = useMemo(
+    () => ai1DebugTimeline.filter((step) => isAI1DebugAnomalyStatus(step.status)),
+    [ai1DebugTimeline]
+  );
+  const ai1DebugTimelineStepsForRender = useMemo(
+    () => (ai1TimelineAnomalyOnly ? ai1DebugTimelineAnomalies : ai1DebugTimeline),
+    [ai1DebugTimeline, ai1DebugTimelineAnomalies, ai1TimelineAnomalyOnly]
+  );
+  const ai1DebugTimelineStatusStats = useMemo(() => {
+    const stats = { done: 0, repaired: 0, warn: 0, error: 0, pending: 0, unknown: 0 };
+    for (const step of ai1DebugTimeline) {
+      const status = normalizeAI1DebugStepStatus(step.status);
+      if (status === "done") stats.done += 1;
+      else if (status === "repaired") stats.repaired += 1;
+      else if (status === "warn") stats.warn += 1;
+      else if (status === "error") stats.error += 1;
+      else if (status === "pending") stats.pending += 1;
+      else stats.unknown += 1;
+    }
+    return stats;
+  }, [ai1DebugTimeline]);
+  const copyAI1IssueContext = useCallback(async () => {
+    if (!ai1Debug || !activeJob) return;
+    const payload = {
+      schema_version: "ai1_issue_context_v1",
+      copied_at: new Date().toISOString(),
+      job: {
+        job_id: activeJob.id,
+        title: activeJob.title || "",
+        requested_format: ai1Debug.requested_format || "",
+        flow_mode: ai1Debug.flow_mode || "",
+        stage: ai1Debug.stage || "",
+        status: ai1Debug.status || "",
+        source_prompt: ai1Debug.source_prompt || "",
+      },
+      anomaly_steps: ai1DebugTimelineAnomalies,
+      contract_report: ai1DebugOutput.contractReport,
+      model_request_summary:
+        (ai1Debug.model_request?.payload_summary_v2 as Record<string, unknown> | undefined) || ai1Debug.model_request || {},
+      model_response_summary:
+        (ai1Debug.model_response?.response_summary_v2 as Record<string, unknown> | undefined) || ai1Debug.model_response || {},
+      trace_contract:
+        (ai1Debug.trace?.ai1_output_contract_v2 as Record<string, unknown> | undefined) || ai1DebugOutput.contractReport,
+    };
+    const text = prettyJSON(payload);
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error("clipboard_unavailable");
+      }
+      setAI1IssueCopyState("copied");
+      window.setTimeout(() => setAI1IssueCopyState("idle"), 1600);
+    } catch {
+      setAI1IssueCopyState("error");
+      window.setTimeout(() => setAI1IssueCopyState("idle"), 2200);
+    }
+  }, [activeJob, ai1Debug, ai1DebugOutput.contractReport, ai1DebugTimelineAnomalies]);
+  const ai1RichMessages = useMemo<RichMessage[]>(() => {
+    if (!activeJob) return [];
+
+    const now = Date.now();
+    const messages: RichMessage[] = [];
+    const focusAnomalyOnly = ai1TimelineAnomalyOnly;
+    const requestedFormat = (ai1Debug?.requested_format || activeJobRequestedFormats[0] || "").toLowerCase();
+    const outputCount = numberFromAny(activeJob.metrics?.output_count);
+    const generatedFormats = activeJobGeneratedFormats.length ? activeJobGeneratedFormats : activeJobRequestedFormats;
+
+    if (!focusAnomalyOnly) {
+      messages.push({
+        id: `upload-progress-${activeJob.id}`,
+        role: "system",
+        type: "upload_progress",
+        created_at: now,
+        payload: {
+          job_id: activeJob.id,
+          stage: activeJob.stage,
+          stage_label: STAGE_LABEL[activeJob.stage] || activeJob.stage || "-",
+          status: activeJob.status,
+          status_label: STATUS_LABEL[activeJob.status] || activeJob.status || "-",
+          progress_percent: Math.max(0, Math.min(100, Number(activeJob.progress || 0))),
+          requested_format: requestedFormat,
+          generated_formats: generatedFormats,
+          queue_label: executionLaneLabel(activeJob.options?.execution_queue) || stringFromAny(activeJob.options?.execution_queue) || "-",
+          updated_at: activeJob.updated_at,
+        },
+      });
+    }
+
+    if (!focusAnomalyOnly && (Object.keys(ai1DebugOutput.userReply).length || Object.keys(ai1DebugOutput.ai2Instruction).length)) {
+      const userReply = ai1DebugOutput.userReply;
+      const ai2Instruction = ai1DebugOutput.ai2Instruction;
+      const riskWarning =
+        userReply.risk_warning && typeof userReply.risk_warning === "object"
+          ? (userReply.risk_warning as { has_risk?: boolean; message?: string })
+          : undefined;
+      messages.push({
+        id: `ai1-plan-${activeJob.id}`,
+        role: "assistant",
+        type: "ai1_plan_card",
+        created_at: now + 1,
+        payload: {
+          requested_format: requestedFormat,
+          summary: stringFromAny(userReply.summary),
+          intent_understanding: stringFromAny(userReply.intent_understanding),
+          strategy_summary: stringFromAny(userReply.strategy_summary),
+          detected_tags: stringListFromAny(userReply.detected_tags),
+          risk_warning: riskWarning,
+          estimated_eta_seconds: numberFromAny(userReply.estimated_eta_seconds),
+          must_capture: stringListFromAny(ai2Instruction.must_capture),
+          avoid: stringListFromAny(ai2Instruction.avoid),
+          style_direction: stringFromAny(ai2Instruction.style_direction),
+          objective: stringFromAny(ai2Instruction.objective),
+          interactive_action: stringFromAny(userReply.interactive_action),
+        },
+        actions: [
+          {
+            key: "confirm_ai1",
+            label: activeJobAwaitingAI1Confirm ? "确认方案并继续" : "当前无需确认",
+            style: "primary",
+            disabled: !activeJobAwaitingAI1Confirm,
+          },
+          {
+            key: "copy_issue_context",
+            label: "复制问题上下文",
+            style: "secondary",
+            disabled: !ai1DebugTimelineAnomalies.length,
+          },
+        ],
+      });
+    }
+
+    for (let i = 0; i < ai1DebugTimelineStepsForRender.length; i += 1) {
+      const step = ai1DebugTimelineStepsForRender[i];
+      messages.push({
+        id: `processing-${activeJob.id}-${step.key}-${i}`,
+        role: "system",
+        type: "processing_status",
+        created_at: now + 2 + i,
+        payload: {
+          stage_key: step.key,
+          stage_title: step.title,
+          status: step.status,
+          summary: step.summary,
+          details: step.details,
+        },
+      });
+    }
+
+    if (!focusAnomalyOnly && activeJob.status === "done") {
+      messages.push({
+        id: `final-gallery-${activeJob.id}`,
+        role: "assistant",
+        type: "final_gallery",
+        created_at: now + 999,
+        payload: {
+          job_id: activeJob.id,
+          requested_format: requestedFormat,
+          output_count: outputCount > 0 ? outputCount : undefined,
+          assets: [],
+          note: outputCount > 0 ? "任务已完成，可进入我的作品查看全部资源。" : "任务已完成，可进入我的作品查看结果。",
+        },
+        actions: [
+          {
+            key: "goto_my_works",
+            label: "查看我的作品",
+            style: "primary",
+            href: "/mine/works",
+          },
+        ],
+      });
+    }
+
+    return messages;
+  }, [
+    activeJob,
+    activeJobGeneratedFormats,
+    activeJobRequestedFormats,
+    activeJobAwaitingAI1Confirm,
+    ai1Debug,
+    ai1DebugOutput.ai2Instruction,
+    ai1DebugOutput.userReply,
+    ai1DebugTimelineAnomalies.length,
+    ai1DebugTimelineStepsForRender,
+    ai1TimelineAnomalyOnly,
+  ]);
 
   const appendTimeline = useCallback((input: TimelineMessageInput) => {
     const id = input.id || createMessageID();
@@ -1035,30 +1359,8 @@ export default function CreatePage() {
     }
   }, []);
 
-  const loadJobEvents = useCallback(
-    async (jobID: number, reset = false) => {
-      const currentCursor = reset ? 0 : eventCursorRef.current[jobID] || 0;
-      if (reset) {
-        eventCursorRef.current[jobID] = 0;
-      }
-
-      const params = new URLSearchParams();
-      params.set("limit", "120");
-      if (currentCursor > 0) {
-        params.set("since_id", String(currentCursor));
-      }
-
-      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/events?${params.toString()}`);
-      if (res.status === 401) {
-        clearAuthSession();
-        setIsAuthed(false);
-        return;
-      }
-      if (!res.ok) return;
-
-      const data = (await res.json()) as VideoJobEventListResponse;
-      const items = Array.isArray(data.items) ? data.items : [];
-
+  const consumeJobEvents = useCallback(
+    (jobID: number, items: VideoJobEventItem[]) => {
       for (const event of items) {
         const eventID = Number(event.id || 0);
         const eventKey = `${jobID}:${eventID}`;
@@ -1085,8 +1387,40 @@ export default function CreatePage() {
           ts: event.created_at ? new Date(event.created_at).getTime() : Date.now(),
         });
       }
+    },
+    [appendTimeline]
+  );
 
-      const nextSinceID = Number(data.next_since_id || currentCursor || 0);
+  const loadJobEvents = useCallback(
+    async (jobID: number, reset = false) => {
+      const currentCursor = reset ? 0 : eventCursorRef.current[jobID] || 0;
+      if (reset) {
+        eventCursorRef.current[jobID] = 0;
+      }
+
+      const params = new URLSearchParams();
+      params.set("limit", "120");
+      if (currentCursor > 0) {
+        params.set("since_id", String(currentCursor));
+      }
+
+      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/events?${params.toString()}`);
+      if (res.status === 401) {
+        clearAuthSession();
+        setIsAuthed(false);
+        return;
+      }
+      if (!res.ok) return;
+
+      const data = (await res.json()) as VideoJobEventListResponse;
+      const items = Array.isArray(data.items) ? data.items : [];
+      consumeJobEvents(jobID, items);
+
+      const maxEventID = items.reduce((maxID, item) => {
+        const value = Number(item.id || 0);
+        return Number.isFinite(value) && value > maxID ? Math.trunc(value) : maxID;
+      }, 0);
+      const nextSinceID = Number(data.next_since_id || maxEventID || currentCursor || 0);
       if (Number.isFinite(nextSinceID) && nextSinceID >= 0) {
         const prev = eventCursorRef.current[jobID] || 0;
         if (nextSinceID > prev) {
@@ -1094,7 +1428,7 @@ export default function CreatePage() {
         }
       }
     },
-    [appendTimeline]
+    [consumeJobEvents]
   );
 
   const handleCancelJob = useCallback(
@@ -1160,6 +1494,68 @@ export default function CreatePage() {
     },
     [appendTimeline, confirmingContinue, loadJobEvents, loadJobs]
   );
+  const handleRichMessageAction = useCallback(
+    async (action: RichMessageAction) => {
+      const key = (action.key || "").trim().toLowerCase();
+      if (!key) return;
+      if (key === "confirm_ai1") {
+        if (activeJob?.id) {
+          await confirmContinueAfterAI1(activeJob.id);
+        }
+        return;
+      }
+      if (key === "copy_issue_context") {
+        await copyAI1IssueContext();
+        return;
+      }
+      if (key === "open_normalized_debug") {
+        setAI1DebugTab("normalized");
+        return;
+      }
+      if (action.href) {
+        if (typeof window !== "undefined") {
+          if (action.target === "_blank") {
+            window.open(action.href, "_blank", "noopener,noreferrer");
+          } else {
+            window.location.href = action.href;
+          }
+        }
+      }
+    },
+    [activeJob?.id, confirmContinueAfterAI1, copyAI1IssueContext]
+  );
+
+  const handleJobStreamEnvelope = useCallback(
+    (envelope: JobStreamEnvelope) => {
+      if (!activeJobID) return;
+      const jobIDFromEnvelope = Number(envelope.job_id || 0);
+      if (jobIDFromEnvelope > 0 && jobIDFromEnvelope !== activeJobID) return;
+      if (String(envelope.type || "").toLowerCase() !== "video_job_event") return;
+      if (!envelope.event) return;
+      consumeJobEvents(activeJobID, [envelope.event as VideoJobEventItem]);
+      const nextSinceID = Number(envelope.next_since_id || envelope.event.id || 0);
+      if (Number.isFinite(nextSinceID) && nextSinceID > (eventCursorRef.current[activeJobID] || 0)) {
+        eventCursorRef.current[activeJobID] = Math.trunc(nextSinceID);
+      }
+    },
+    [activeJobID, consumeJobEvents]
+  );
+
+  const handleJobStreamFallbackPoll = useCallback(async () => {
+    if (!activeJobID) return;
+    await loadJobEvents(activeJobID, false);
+  }, [activeJobID, loadJobEvents]);
+
+  const activeJobCursor = activeJobID ? eventCursorRef.current[activeJobID] || 0 : 0;
+  const jobStreamState = useJobStream({
+    apiBase: API_BASE,
+    jobID: activeJobID,
+    enabled: Boolean(isAuthed && activeJobID),
+    initialSinceID: activeJobCursor,
+    onEnvelope: handleJobStreamEnvelope,
+    onFallbackPoll: handleJobStreamFallbackPoll,
+    fallbackIntervalMs: 2800,
+  });
 
   const handleSend = useCallback(async () => {
     if (submitting) return;
@@ -1212,17 +1608,43 @@ export default function CreatePage() {
       const key = makeVideoKey(file.name);
       const step2 = appendTimeline({ role: "assistant", level: "info", text: "步骤 2/4：申请上传凭证..." });
 
+      const parseUploadTokenError = async (res: Response) => {
+        const raw = ((await res.text()) || "").trim();
+        if (!raw) return "";
+        try {
+          const obj = JSON.parse(raw) as { error?: string; message?: string };
+          return String(obj?.message || obj?.error || raw);
+        } catch {
+          return raw;
+        }
+      };
+
+      let tokenSource = "video-jobs:key";
       let tokenRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs/upload-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, insert_only: true }),
       });
+
+      if (tokenRes.status === 403) {
+        const errText = (await parseUploadTokenError(tokenRes)).toLowerCase();
+        if (errText.includes("forbidden")) {
+          tokenRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs/upload-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ insert_only: true }),
+          });
+          tokenSource = "video-jobs:auto-prefix";
+        }
+      }
+
       if (tokenRes.status === 404) {
         tokenRes = await fetchWithAuthRetry(`${API_BASE}/storage/upload-token`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ key, insert_only: true }),
         });
+        tokenSource = "storage-compat";
       }
       if (tokenRes.status === 401) {
         clearAuthSession();
@@ -1230,12 +1652,26 @@ export default function CreatePage() {
         throw new Error("请先登录后上传视频");
       }
       if (!tokenRes.ok) {
-        throw new Error((await tokenRes.text()) || "获取上传凭证失败");
+        const reason = await parseUploadTokenError(tokenRes);
+        if (tokenSource === "storage-compat" && tokenRes.status === 403 && reason.toLowerCase() === "forbidden") {
+          throw new Error("上传凭证接口被拒绝：当前后端 /api/storage/upload-token 仅管理员可用，且 /api/video-jobs/upload-token 不可用。请同步后端并重启服务。");
+        }
+        if (tokenRes.status === 404) {
+          throw new Error("后端缺少 /api/video-jobs/upload-token 接口，请先更新并重启后端服务。");
+        }
+        throw new Error(reason || `获取上传凭证失败（HTTP ${tokenRes.status}）`);
       }
 
       const tokenData = (await tokenRes.json()) as UploadTokenResponse;
-      const uploadKey = tokenData.key || key;
+      const uploadKeyFromPrefix = tokenData.prefix
+        ? `${tokenData.prefix}${Date.now()}-${sanitizeFileName(file.name || "video.mp4") || "video.mp4"}`
+        : "";
+      const uploadKey = tokenData.key || uploadKeyFromPrefix || key;
       const upHost = tokenData.up_host || "https://up.qiniup.com";
+
+      if (!uploadKey) {
+        throw new Error("上传凭证未返回可用文件 Key");
+      }
 
       patchTimeline(step2, { text: "步骤 2/4：上传视频中（0%）" });
       await new Promise<void>((resolve, reject) => {
@@ -1269,7 +1705,7 @@ export default function CreatePage() {
       patchTimeline(step2, {
         level: "success",
         text: "步骤 2/4：视频上传完成",
-        meta: `源视频 Key：${uploadKey}`,
+        meta: `源视频 Key：${uploadKey} · 凭证来源：${tokenSource}`,
       });
 
       const step3 = appendTimeline({ role: "assistant", level: "info", text: "步骤 3/4：服务端探测视频信息..." });
@@ -1444,6 +1880,8 @@ export default function CreatePage() {
       announcedActiveJobRef.current = activeJobID;
       setAI1Debug(null);
       setAI1DebugError(null);
+      setAI1TimelineAnomalyOnly(false);
+      setAI1IssueCopyState("idle");
       appendTimeline({
         role: "assistant",
         name: "系统",
@@ -1457,7 +1895,7 @@ export default function CreatePage() {
     let cancelled = false;
     const poll = async () => {
       if (cancelled) return;
-      await Promise.all([loadJobEvents(activeJobID, false), loadJobDetail(activeJobID), loadAI1Debug(activeJobID, true)]);
+      await Promise.all([loadJobDetail(activeJobID), loadAI1Debug(activeJobID, true)]);
     };
 
     void poll();
@@ -1465,7 +1903,7 @@ export default function CreatePage() {
       if (document.visibilityState === "visible") {
         void poll();
       }
-    }, 2800);
+    }, 3200);
 
     return () => {
       cancelled = true;
@@ -1474,8 +1912,30 @@ export default function CreatePage() {
   }, [activeJobID, appendTimeline, isAuthed, loadAI1Debug, loadJobDetail, loadJobEvents]);
 
   useEffect(() => {
+    if (!showAI1DebugModal) {
+      setAI1IssueCopyState("idle");
+    }
+  }, [showAI1DebugModal]);
+
+  useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [timeline.length]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (showAI1DebugModal) {
+        setShowAI1DebugModal(false);
+        return;
+      }
+      if (showTaskPanel) {
+        setShowTaskPanel(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showAI1DebugModal, showTaskPanel]);
 
   if (!authReady) {
     return (
@@ -1517,7 +1977,7 @@ export default function CreatePage() {
         body { overflow: hidden; }
         .main-content-height { height: calc(100vh - 64px); }
       `}} />
-      <div className="mx-auto max-w-5xl px-4 py-6 lg:px-6 main-content-height flex flex-col">
+      <div className="mx-auto max-w-6xl px-4 py-6 lg:px-6 main-content-height flex flex-col">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-2xl font-black text-slate-900">视频转图片 · AI 交互工作台</h1>
@@ -1528,9 +1988,52 @@ export default function CreatePage() {
             {loadingCapabilities ? (
               <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-indigo-600">能力探测中...</span>
             ) : null}
+            {activeJobID ? (
+              <span
+                className={`rounded-full border px-2 py-0.5 ${
+                  jobStreamState.mode === "streaming"
+                    ? "border-emerald-100 bg-emerald-50 text-emerald-600"
+                    : jobStreamState.mode === "fallback"
+                      ? "border-amber-100 bg-amber-50 text-amber-700"
+                      : "border-slate-200 bg-white text-slate-500"
+                }`}
+                title={jobStreamState.lastError || "事件同步链路状态"}
+              >
+                {jobStreamState.mode === "streaming"
+                  ? "事件流：SSE"
+                  : jobStreamState.mode === "fallback"
+                    ? "事件流：轮询降级"
+                    : "事件流：连接中"}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setShowAI1DebugModal(true);
+              if (activeJob?.id) {
+                void loadAI1Debug(activeJob.id);
+              }
+            }}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold transition shadow-sm ${
+              showAI1DebugModal
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            AI1 调试视图
+          </button>
+          <button
+            onClick={() => setShowTaskPanel((prev) => !prev)}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold transition shadow-sm ${
+              showTaskPanel
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            {showTaskPanel ? "收起任务面板" : "任务面板"}
+          </button>
           <button
             onClick={() => {
               setTimeline([
@@ -1561,196 +2064,8 @@ export default function CreatePage() {
         <div className="mb-3 rounded-xl border border-rose-100 bg-rose-50 px-4 py-2 text-sm text-rose-700 shrink-0">{globalError}</div>
       ) : null}
 
-      <section className="flex flex-1 flex-col rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden relative">
-        {compactJobs.length > 0 ? (
-          <details className="group border-b border-slate-100 bg-white/90 px-4 py-2 shrink-0">
-            <summary className="cursor-pointer list-none text-xs text-slate-500">
-              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600">
-                任务列表（紧凑）
-                <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] text-slate-500">{compactJobs.length}</span>
-              </span>
-            </summary>
-            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-              {compactJobs.map((job) => {
-                const active = job.id === activeJobID;
-                return (
-                  <button
-                    key={job.id}
-                    onClick={() => setActiveJobID(job.id)}
-                    className={`shrink-0 rounded-full border px-3 py-1 text-xs transition ${
-                      active
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                    title={job.title || `任务 #${job.id}`}
-                  >
-                    #{job.id} · {(job.output_formats?.[0] || "auto").toUpperCase()} · {STATUS_LABEL[job.status] || job.status}
-                  </button>
-                );
-              })}
-            </div>
-          </details>
-        ) : null}
-        {activeJob ? (
-          <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-3 shrink-0">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-slate-800">
-                  当前任务 #{activeJob.id} · {activeJob.title || "未命名任务"}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 shadow-sm">
-                    {STATUS_LABEL[activeJob.status] || activeJob.status}
-                  </span>
-                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 shadow-sm">
-                    {STAGE_LABEL[activeJob.stage] || activeJob.stage || "-"}
-                  </span>
-                  {activeJobAwaitingAI1Confirm && (
-                    <button
-                      onClick={() => void confirmContinueAfterAI1(activeJob.id)}
-                      disabled={confirmingContinue}
-                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 transition"
-                    >
-                      {confirmingContinue ? "确认中..." : "确认继续"}
-                    </button>
-                  )}
-                  {(activeJob.status === "queued" || activeJob.status === "running") && (
-                    <button
-                      onClick={() => void handleCancelJob(activeJob.id)}
-                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100 transition"
-                    >
-                      取消任务
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                  style={{ width: `${Math.max(2, Math.min(100, Number(activeJob.progress || 0)))}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] text-slate-400">
-                <span>进度 {Math.max(0, Math.min(100, Number(activeJob.progress || 0)))}%</span>
-                <span>更新时间 {formatTime(activeJob.updated_at)}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
-                  请求格式：{activeJobRequestedFormats.length ? activeJobRequestedFormats.map((it) => it.toUpperCase()).join(", ") : "-"}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
-                  产出格式：{activeJobGeneratedFormats.length ? activeJobGeneratedFormats.map((it) => it.toUpperCase()).join(", ") : "-"}
-                </span>
-              </div>
-              <details className="rounded-xl border border-slate-200 bg-white">
-                <summary className="cursor-pointer select-none list-none px-3 py-2 text-xs text-slate-600">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-700">AI1 调试视图</span>
-                    {loadingAI1Debug ? (
-                      <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-600">
-                        同步中
-                      </span>
-                    ) : null}
-                    {ai1Debug ? (
-                      <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">
-                        已获取
-                      </span>
-                    ) : (
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500">
-                        暂无
-                      </span>
-                    )}
-                  </div>
-                </summary>
-                <div className="border-t border-slate-100 px-3 py-3">
-                  {ai1DebugError ? (
-                    <div className="mb-2 rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700">
-                      {ai1DebugError}
-                    </div>
-                  ) : null}
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-[11px] text-slate-500">
-                      {ai1Debug ? (
-                        <>
-                          格式 {String(ai1Debug.requested_format || "-").toUpperCase()} · 流程 {ai1Debug.flow_mode || "-"} · 状态{" "}
-                          {ai1Debug.status || "-"}
-                          {ai1Debug.source_prompt ? ` · 提示词：${ai1Debug.source_prompt}` : ""}
-                        </>
-                      ) : (
-                        "AI1 数据尚未生成，可稍后刷新。"
-                      )}
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (!activeJob?.id) return;
-                        void loadAI1Debug(activeJob.id);
-                      }}
-                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                      disabled={loadingAI1Debug}
-                    >
-                      {loadingAI1Debug ? "刷新中..." : "刷新"}
-                    </button>
-                  </div>
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => setAI1DebugTab("normalized")}
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                        ai1DebugTab === "normalized"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-slate-200 bg-white text-slate-500"
-                      }`}
-                    >
-                      规范输出
-                    </button>
-                    <button
-                      onClick={() => setAI1DebugTab("request")}
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                        ai1DebugTab === "request"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-slate-200 bg-white text-slate-500"
-                      }`}
-                    >
-                      POST 请求
-                    </button>
-                    <button
-                      onClick={() => setAI1DebugTab("response")}
-                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                        ai1DebugTab === "response"
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-slate-200 bg-white text-slate-500"
-                      }`}
-                    >
-                      模型返回
-                    </button>
-                  </div>
-                  <pre className="max-h-64 overflow-auto rounded-lg border border-slate-200 bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-100">
-                    {ai1DebugTab === "normalized"
-                      ? prettyJSON({
-                          user_reply: ai1DebugOutput.userReply,
-                          ai2_instruction: ai1DebugOutput.ai2Instruction,
-                        })
-                      : ai1DebugTab === "request"
-                        ? prettyJSON({
-                            input: ai1Debug?.input,
-                            model_request: ai1Debug?.model_request,
-                          })
-                        : prettyJSON({
-                            model_response: ai1Debug?.model_response,
-                            trace: ai1Debug?.trace,
-                          })}
-                  </pre>
-                </div>
-              </details>
-              {activeJob.error_message ? (
-                <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                  错误：{activeJob.error_message}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 space-y-6 scroll-smooth">
+      <section className="relative flex flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 scroll-smooth sm:px-6 lg:px-8">
           {timeline.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-slate-400">
               <div className="mb-6 flex items-center justify-center rounded-full bg-emerald-50 p-4 text-emerald-500">
@@ -1917,7 +2232,7 @@ export default function CreatePage() {
           <div ref={timelineEndRef} className="h-2" />
         </div>
 
-        <div className="border-t border-slate-100 bg-slate-50/50 p-4 shrink-0">
+        <div className="shrink-0 border-t border-slate-100 bg-slate-50/50 p-4">
           <div className="mx-auto max-w-4xl">
             <div className="relative rounded-3xl border border-slate-200 bg-white shadow-sm transition-all focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500">
               <textarea
@@ -2043,6 +2358,356 @@ export default function CreatePage() {
             </div>
           </div>
         </div>
+
+        {showTaskPanel ? (
+          <div className="fixed inset-0 z-40">
+            <button
+              aria-label="关闭任务面板"
+              className="absolute inset-0 bg-slate-900/25 backdrop-blur-[1px]"
+              onClick={() => setShowTaskPanel(false)}
+            />
+            <div className="relative z-10 mx-auto flex h-full w-full max-w-6xl items-start justify-end px-4 py-6 lg:px-6">
+              <div className="flex h-[calc(100vh-120px)] w-full max-w-[380px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                  <div className="text-sm font-semibold text-slate-800">任务面板</div>
+                  <button
+                    onClick={() => setShowTaskPanel(false)}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="mb-2 flex items-center justify-between text-xs text-slate-600">
+                      <span className="font-semibold text-slate-700">任务列表（紧凑）</span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{compactJobs.length}</span>
+                    </div>
+                    {compactJobs.length > 0 ? (
+                      <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                        {compactJobs.map((job) => {
+                          const active = job.id === activeJobID;
+                          return (
+                            <button
+                              key={job.id}
+                              onClick={() => setActiveJobID(job.id)}
+                              className={`w-full rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
+                                active
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              }`}
+                              title={job.title || `任务 #${job.id}`}
+                            >
+                              <div className="font-semibold">#{job.id}</div>
+                              <div className="mt-0.5 text-[11px] opacity-80">
+                                {(job.output_formats?.[0] || "auto").toUpperCase()} · {STATUS_LABEL[job.status] || job.status}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-3 text-xs text-slate-400">
+                        暂无任务
+                      </div>
+                    )}
+                  </div>
+
+                  {activeJob ? (
+                    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-sm font-semibold text-slate-800">当前任务 #{activeJob.id}</div>
+                      <div className="text-xs text-slate-500">{activeJob.title || "未命名任务"}</div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                          {STATUS_LABEL[activeJob.status] || activeJob.status}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                          {STAGE_LABEL[activeJob.stage] || activeJob.stage || "-"}
+                        </span>
+                      </div>
+
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                          style={{ width: `${Math.max(2, Math.min(100, Number(activeJob.progress || 0)))}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>进度 {Math.max(0, Math.min(100, Number(activeJob.progress || 0)))}%</span>
+                        <span>{formatTime(activeJob.updated_at)}</span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+                          请求：{activeJobRequestedFormats.length ? activeJobRequestedFormats.map((it) => it.toUpperCase()).join(", ") : "-"}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+                          产出：{activeJobGeneratedFormats.length ? activeJobGeneratedFormats.map((it) => it.toUpperCase()).join(", ") : "-"}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {activeJobAwaitingAI1Confirm ? (
+                          <button
+                            onClick={() => void confirmContinueAfterAI1(activeJob.id)}
+                            disabled={confirmingContinue}
+                            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                          >
+                            {confirmingContinue ? "确认中..." : "确认继续"}
+                          </button>
+                        ) : null}
+                        {activeJob.status === "queued" || activeJob.status === "running" ? (
+                          <button
+                            onClick={() => void handleCancelJob(activeJob.id)}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100"
+                          >
+                            取消任务
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2.5 text-xs text-slate-600">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-slate-700">AI1 调试数据</span>
+                          {loadingAI1Debug ? (
+                            <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-600">同步中</span>
+                          ) : null}
+                          {ai1Debug ? (
+                            <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">已获取</span>
+                          ) : (
+                            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500">暂无</span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => {
+                              setShowAI1DebugModal(true);
+                              void loadAI1Debug(activeJob.id);
+                            }}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            打开 AI1 调试视图
+                          </button>
+                          <button
+                            onClick={() => void loadAI1Debug(activeJob.id)}
+                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                            disabled={loadingAI1Debug}
+                          >
+                            {loadingAI1Debug ? "刷新中..." : "刷新"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {activeJob.error_message ? (
+                        <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          错误：{activeJob.error_message}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-400">
+                      当前没有选中任务
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showAI1DebugModal ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              aria-label="关闭 AI1 调试视图"
+              className="absolute inset-0 bg-slate-900/35 backdrop-blur-[1px]"
+              onClick={() => setShowAI1DebugModal(false)}
+            />
+            <div className="relative z-10 mx-auto flex h-full w-full max-w-6xl items-start justify-center px-4 py-6 lg:px-6">
+              <div className="flex h-[calc(100vh-120px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">AI1 调试视图</div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      {activeJob ? `任务 #${activeJob.id} · ${activeJob.title || "未命名任务"}` : "当前没有选中任务"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAI1DebugModal(false)}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-4 py-4">
+                  {activeJob ? (
+                    <div className="space-y-3">
+                      {ai1DebugError ? (
+                        <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {ai1DebugError}
+                        </div>
+                      ) : null}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div className="text-xs text-slate-600">
+                          {ai1Debug ? (
+                            <>
+                              格式 {String(ai1Debug.requested_format || "-").toUpperCase()} · 流程 {ai1Debug.flow_mode || "-"} · 状态{" "}
+                              {ai1Debug.status || "-"}
+                              {ai1Debug.source_prompt ? ` · 提示词：${ai1Debug.source_prompt}` : ""}
+                            </>
+                          ) : (
+                            "AI1 数据尚未生成，可稍后刷新。"
+                          )}
+                        </div>
+                        <button
+                          onClick={() => void loadAI1Debug(activeJob.id)}
+                          className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                          disabled={loadingAI1Debug}
+                        >
+                          {loadingAI1Debug ? "刷新中..." : "刷新"}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => setAI1DebugTab("timeline")}
+                          className={`rounded-full border px-2.5 py-1 text-xs ${
+                            ai1DebugTab === "timeline"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500"
+                          }`}
+                        >
+                          时序视图
+                        </button>
+                        <button
+                          onClick={() => setAI1DebugTab("normalized")}
+                          className={`rounded-full border px-2.5 py-1 text-xs ${
+                            ai1DebugTab === "normalized"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500"
+                          }`}
+                        >
+                          规范输出
+                        </button>
+                        <button
+                          onClick={() => setAI1DebugTab("request")}
+                          className={`rounded-full border px-2.5 py-1 text-xs ${
+                            ai1DebugTab === "request"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500"
+                          }`}
+                        >
+                          POST 请求
+                        </button>
+                        <button
+                          onClick={() => setAI1DebugTab("response")}
+                          className={`rounded-full border px-2.5 py-1 text-xs ${
+                            ai1DebugTab === "response"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500"
+                          }`}
+                        >
+                          模型返回
+                        </button>
+                      </div>
+
+                      {ai1DebugTab === "timeline" ? (
+                        <div className="h-[calc(100vh-330px)] min-h-[280px] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">总步骤 {ai1DebugTimeline.length}</span>
+                                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                  异常 {ai1DebugTimelineAnomalies.length}
+                                </span>
+                                {ai1DebugTimelineStatusStats.repaired > 0 ? (
+                                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                    修复 {ai1DebugTimelineStatusStats.repaired}
+                                  </span>
+                                ) : null}
+                                {ai1DebugTimelineStatusStats.error > 0 ? (
+                                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                    失败 {ai1DebugTimelineStatusStats.error}
+                                  </span>
+                                ) : null}
+                                {ai1DebugTimelineStatusStats.warn > 0 ? (
+                                  <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-orange-700">
+                                    风险 {ai1DebugTimelineStatusStats.warn}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                <button
+                                  onClick={() => setAI1TimelineAnomalyOnly((prev) => !prev)}
+                                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                                    ai1TimelineAnomalyOnly
+                                      ? "border-rose-200 bg-rose-50 text-rose-700"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {ai1TimelineAnomalyOnly ? "显示全部步骤" : "异常聚焦（失败/修复）"}
+                                </button>
+                                <button
+                                  onClick={() => void copyAI1IssueContext()}
+                                  disabled={!ai1DebugTimelineAnomalies.length}
+                                  className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {ai1IssueCopyState === "copied" ? "已复制" : ai1IssueCopyState === "error" ? "复制失败" : "复制问题上下文"}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2.5">
+                            {ai1RichMessages.length ? (
+                              ai1RichMessages.map((message) => (
+                                <MessageRenderer key={message.id} message={message} onAction={handleRichMessageAction} />
+                              ))
+                            ) : ai1DebugTimeline.length ? (
+                              <div className="rounded-lg border border-dashed border-amber-200 bg-amber-50 px-3 py-6 text-center text-xs text-amber-700">
+                                当前无异常步骤，已通过聚焦模式过滤。
+                              </div>
+                            ) : (
+                              <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-500">
+                                暂无 AI1 时序数据，请先触发一次 AI1 调试请求。
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <pre className="h-[calc(100vh-330px)] min-h-[280px] overflow-auto rounded-lg border border-slate-200 bg-slate-900 p-4 text-[12px] leading-relaxed text-emerald-100">
+                          {ai1DebugTab === "normalized"
+                            ? prettyJSON({
+                                user_reply: ai1DebugOutput.userReply,
+                                ai2_instruction: ai1DebugOutput.ai2Instruction,
+                                ai1_output_v2: ai1DebugOutput.ai1OutputV2,
+                                contract_report: ai1DebugOutput.contractReport,
+                              })
+                            : ai1DebugTab === "request"
+                              ? prettyJSON({
+                                  input: ai1Debug?.input,
+                                  model_request: ai1Debug?.model_request,
+                                })
+                              : prettyJSON({
+                                  model_response: ai1Debug?.model_response,
+                                  trace: ai1Debug?.trace,
+                                })}
+                        </pre>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                      当前没有选中任务，无法查看 AI1 调试数据。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
     </>
