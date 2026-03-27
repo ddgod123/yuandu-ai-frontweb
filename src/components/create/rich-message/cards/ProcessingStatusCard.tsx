@@ -9,8 +9,10 @@ type ProcessingStatusCardProps = {
 
 export function ProcessingStatusCard({ payload, actions, onAction }: ProcessingStatusCardProps) {
   const details = payload.details && typeof payload.details === "object" ? payload.details : null;
+  const status = String(payload.status || "").trim().toLowerCase();
+  const shouldPulse = !["done", "error", "warn", "repaired", "failed", "cancelled"].includes(status);
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+    <div className={`rounded-xl border border-slate-200 bg-white p-3 shadow-sm ${shouldPulse ? "animate-pulse" : ""}`}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-sm font-medium text-slate-800">{payload.stage_title || payload.stage_key || "处理中"}</div>
         <span className={`rounded-full border px-2 py-0.5 text-[11px] ${aiStatusBadgeClass(payload.status)}`}>
@@ -46,4 +48,3 @@ export function ProcessingStatusCard({ payload, actions, onAction }: ProcessingS
     </div>
   );
 }
-

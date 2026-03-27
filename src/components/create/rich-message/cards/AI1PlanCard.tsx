@@ -4,6 +4,7 @@ type AI1PlanCardProps = {
   payload: AI1PlanCardPayload;
   actions?: RichMessageAction[];
   onAction?: (action: RichMessageAction) => void;
+  pendingActionKey?: string | null;
 };
 
 function actionClass(style?: string) {
@@ -17,12 +18,13 @@ function actionClass(style?: string) {
   }
 }
 
-export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
+export function AI1PlanCard({ payload, actions, onAction, pendingActionKey }: AI1PlanCardProps) {
   const tags = Array.isArray(payload.detected_tags) ? payload.detected_tags : [];
   const mustCapture = Array.isArray(payload.must_capture) ? payload.must_capture : [];
   const avoid = Array.isArray(payload.avoid) ? payload.avoid : [];
   const hasRisk = Boolean(payload.risk_warning?.has_risk);
   const eta = Number(payload.estimated_eta_seconds || 0);
+  const hasPendingAction = Boolean(pendingActionKey);
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 shadow-sm">
@@ -46,7 +48,11 @@ export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
       {tags.length ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {tags.map((tag, idx) => (
-            <span key={`${tag}-${idx}`} className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-700">
+            <span
+              key={`${tag}-${idx}`}
+              title={tag}
+              className="max-w-[220px] truncate rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-emerald-700"
+            >
               {tag}
             </span>
           ))}
@@ -58,7 +64,11 @@ export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
           <div className="mb-1 text-[11px] font-semibold text-emerald-800">必须捕捉</div>
           <div className="flex flex-wrap gap-1">
             {mustCapture.map((entry, idx) => (
-              <span key={`${entry}-${idx}`} className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-slate-700">
+              <span
+                key={`${entry}-${idx}`}
+                title={entry}
+                className="max-w-[220px] truncate rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+              >
                 {entry}
               </span>
             ))}
@@ -71,7 +81,11 @@ export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
           <div className="mb-1 text-[11px] font-semibold text-rose-700">规避项</div>
           <div className="flex flex-wrap gap-1">
             {avoid.map((entry, idx) => (
-              <span key={`${entry}-${idx}`} className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700">
+              <span
+                key={`${entry}-${idx}`}
+                title={entry}
+                className="max-w-[220px] truncate rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] text-rose-700"
+              >
                 {entry}
               </span>
             ))}
@@ -91,11 +105,14 @@ export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
             <button
               key={action.key}
               type="button"
-              disabled={Boolean(action.disabled)}
-              onClick={() => onAction?.(action)}
+              disabled={Boolean(action.disabled) || hasPendingAction}
+              onClick={() => {
+                if (hasPendingAction) return;
+                onAction?.(action);
+              }}
               className={`rounded-md border px-2.5 py-1 text-[11px] transition ${actionClass(action.style)} disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              {action.label}
+              {pendingActionKey === action.key ? "处理中..." : action.label}
             </button>
           ))}
         </div>
@@ -103,4 +120,3 @@ export function AI1PlanCard({ payload, actions, onAction }: AI1PlanCardProps) {
     </div>
   );
 }
-

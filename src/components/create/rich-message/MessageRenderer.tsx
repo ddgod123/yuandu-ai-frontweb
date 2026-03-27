@@ -14,9 +14,10 @@ import { UploadProgressCard } from "./cards/UploadProgressCard";
 type MessageRendererProps = {
   message: RichMessage;
   onAction?: (action: RichMessageAction, message: RichMessage) => void;
+  pendingActionKey?: string | null;
 };
 
-export function MessageRenderer({ message, onAction }: MessageRendererProps) {
+export function MessageRenderer({ message, onAction, pendingActionKey }: MessageRendererProps) {
   const sharedActionHandler = (action: RichMessageAction) => onAction?.(action, message);
   const payload = message.payload;
 
@@ -31,7 +32,12 @@ export function MessageRenderer({ message, onAction }: MessageRendererProps) {
       ) : null;
     case "ai1_plan_card":
       return payload ? (
-        <AI1PlanCard payload={payload as AI1PlanCardPayload} actions={message.actions} onAction={sharedActionHandler} />
+        <AI1PlanCard
+          payload={payload as AI1PlanCardPayload}
+          actions={message.actions}
+          onAction={sharedActionHandler}
+          pendingActionKey={pendingActionKey}
+        />
       ) : null;
     case "processing_status":
       return payload ? (

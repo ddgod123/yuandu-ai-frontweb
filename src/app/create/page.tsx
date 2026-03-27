@@ -865,6 +865,7 @@ export default function CreatePage() {
   const [ai1IssueCopyState, setAI1IssueCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
   const [confirmingContinue, setConfirmingContinue] = useState(false);
+  const [pendingRichActionKey, setPendingRichActionKey] = useState<string | null>(null);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [showAI1DebugModal, setShowAI1DebugModal] = useState(false);
   // const [taskListCompact, setTaskListCompact] = useState(true);
@@ -1498,31 +1499,37 @@ export default function CreatePage() {
     async (action: RichMessageAction) => {
       const key = (action.key || "").trim().toLowerCase();
       if (!key) return;
-      if (key === "confirm_ai1") {
-        if (activeJob?.id) {
-          await confirmContinueAfterAI1(activeJob.id);
+      if (pendingRichActionKey) return;
+      setPendingRichActionKey(key);
+      try {
+        if (key === "confirm_ai1") {
+          if (activeJob?.id) {
+            await confirmContinueAfterAI1(activeJob.id);
+          }
+          return;
         }
-        return;
-      }
-      if (key === "copy_issue_context") {
-        await copyAI1IssueContext();
-        return;
-      }
-      if (key === "open_normalized_debug") {
-        setAI1DebugTab("normalized");
-        return;
-      }
-      if (action.href) {
-        if (typeof window !== "undefined") {
-          if (action.target === "_blank") {
-            window.open(action.href, "_blank", "noopener,noreferrer");
-          } else {
-            window.location.href = action.href;
+        if (key === "copy_issue_context") {
+          await copyAI1IssueContext();
+          return;
+        }
+        if (key === "open_normalized_debug") {
+          setAI1DebugTab("normalized");
+          return;
+        }
+        if (action.href) {
+          if (typeof window !== "undefined") {
+            if (action.target === "_blank") {
+              window.open(action.href, "_blank", "noopener,noreferrer");
+            } else {
+              window.location.href = action.href;
+            }
           }
         }
+      } finally {
+        setPendingRichActionKey(null);
       }
     },
-    [activeJob?.id, confirmContinueAfterAI1, copyAI1IssueContext]
+    [activeJob?.id, confirmContinueAfterAI1, copyAI1IssueContext, pendingRichActionKey]
   );
 
   const handleJobStreamEnvelope = useCallback(
@@ -2664,7 +2671,12 @@ export default function CreatePage() {
                           <div className="space-y-2.5">
                             {ai1RichMessages.length ? (
                               ai1RichMessages.map((message) => (
-                                <MessageRenderer key={message.id} message={message} onAction={handleRichMessageAction} />
+                                <MessageRenderer
+                                  key={message.id}
+                                  message={message}
+                                  onAction={handleRichMessageAction}
+                                  pendingActionKey={pendingRichActionKey}
+                                />
                               ))
                             ) : ai1DebugTimeline.length ? (
                               <div className="rounded-lg border border-dashed border-amber-200 bg-amber-50 px-3 py-6 text-center text-xs text-amber-700">
