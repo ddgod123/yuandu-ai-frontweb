@@ -314,7 +314,10 @@ export default function MineWorksPage() {
     setError(null);
     setBatchHint(null);
     try {
-      const jobsRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs?limit=80&include_result_summary=1`);
+      let jobsRes = await fetchWithAuthRetry(`${API_BASE}/my/works?limit=80`);
+      if (jobsRes.status === 404 || jobsRes.status === 405) {
+        jobsRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs?limit=80&include_result_summary=1`);
+      }
       if (jobsRes.status === 401) {
         clearAuthSession();
         router.replace(`/login?next=${encodeURIComponent("/mine/works")}`);
@@ -326,7 +329,11 @@ export default function MineWorksPage() {
 
       const payload = (await jobsRes.json()) as VideoJobListResponse;
       const doneJobs = (Array.isArray(payload.items) ? payload.items : [])
-        .filter((item) => item.status === "done" && Number(item.result_collection_id || 0) > 0)
+        .filter((item) => {
+          if (item.status !== "done") return false;
+          const collectionID = Number(item.result_collection_id || item.result_summary?.collection_id || item.id || 0);
+          return collectionID > 0;
+        })
         .sort((a, b) => parseTimestamp(b.updated_at || b.created_at) - parseTimestamp(a.updated_at || a.created_at));
 
       if (!doneJobs.length) {
