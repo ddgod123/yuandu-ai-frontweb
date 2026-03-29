@@ -13,7 +13,7 @@ import {
 } from "@/lib/auth-client";
 import { emitBehaviorEvent } from "@/lib/behavior-events";
 import { usePathname } from "next/navigation";
-import { Crown, LogIn } from "lucide-react";
+import { ChevronDown, Crown, LogIn } from "lucide-react";
 
 type UserInfo = {
   name: string;
@@ -43,6 +43,7 @@ export default function Navbar() {
   // 鉴权状态在 useEffect 里再同步。
   const [isAuthed, setIsAuthed] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [emojiMenuOpenPath, setEmojiMenuOpenPath] = useState<string | null>(null);
   const [user, setUser] = useState<UserInfo>({
     name: "表情用户",
     avatar: buildDefaultAvatar("表情用户"),
@@ -166,11 +167,6 @@ export default function Navbar() {
       match: (path: string) => path === "/",
     },
     {
-      label: "表情包大全",
-      href: "/categories",
-      match: (path: string) => path === "/categories" || path.startsWith("/categories/"),
-    },
-    {
       label: "视频转图片",
       href: "/create",
       match: (path: string) => path === "/create" || path.startsWith("/create/"),
@@ -187,6 +183,17 @@ export default function Navbar() {
         path === "/mine" || path.startsWith("/mine/favorites") || path.startsWith("/mine/my-emojis"),
     },
   ];
+  const isEmojiMenuActive =
+    pathname === "/emoji-recommend" ||
+    pathname === "/categories" ||
+    pathname.startsWith("/categories/");
+  const isEmojiMenuOpen = emojiMenuOpenPath !== null && emojiMenuOpenPath === (pathname || "");
+  const homeNav = navItems[0];
+  const rightNavItems = navItems.slice(1);
+  const emojiMenuItems = [
+    { label: "表情包推荐", href: "/emoji-recommend" },
+    { label: "表情包大全", href: "/categories" },
+  ];
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-slate-100 bg-white/70 backdrop-blur-xl transition-all duration-300">
@@ -202,21 +209,85 @@ export default function Navbar() {
                 priority
               />
             </div>
-            <div className="flex items-center">
-              <span className="text-2xl font-black tracking-tighter text-slate-900 leading-none">表情包<span className="text-emerald-500">档案馆</span></span>
+            <div className="flex flex-col justify-center">
+              <span className="text-xl font-black tracking-tight text-slate-900 leading-none">Emoji</span>
+              <span className="mt-1 text-[11px] font-bold tracking-wider text-emerald-600 uppercase">AI 视觉资产生产平台</span>
             </div>
           </Link>
 
           <div className="hidden items-center gap-1 md:flex">
-            {navItems.map((item) => {
+            <Link
+              href={homeNav.href}
+              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                homeNav.match(pathname || "")
+                  ? "bg-emerald-50/50 text-emerald-600"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              {homeNav.label}
+              {homeNav.match(pathname || "") && (
+                <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+              )}
+            </Link>
+            <div
+              className="relative"
+              onMouseEnter={() => setEmojiMenuOpenPath(pathname || "")}
+              onMouseLeave={() => setEmojiMenuOpenPath(null)}
+            >
+              <button
+                type="button"
+                className={`relative flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                  isEmojiMenuActive
+                    ? "bg-emerald-50/50 text-emerald-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+                onClick={() =>
+                  setEmojiMenuOpenPath((prev) => (prev === (pathname || "") ? null : pathname || ""))
+                }
+              >
+                表情包大全
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${isEmojiMenuOpen ? "rotate-180" : ""}`}
+                />
+                {isEmojiMenuActive && (
+                  <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+                )}
+              </button>
+
+              {isEmojiMenuOpen ? (
+                <div className="absolute left-0 top-full w-40 pt-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                  {emojiMenuItems.map((item) => {
+                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={() => setEmojiMenuOpenPath(null)}
+                        className={`block rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                          active
+                            ? "bg-emerald-50 text-emerald-600"
+                            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            {rightNavItems.map((item) => {
               const isActive = item.match(pathname || "");
               return (
                 <Link
                   key={item.label}
                   href={item.href}
                   className={`relative rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
-                    isActive 
-                      ? "text-emerald-600 bg-emerald-50/50" 
+                    isActive
+                      ? "bg-emerald-50/50 text-emerald-600"
                       : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                   }`}
                 >

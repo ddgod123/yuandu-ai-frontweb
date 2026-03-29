@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "表情包档案馆 - 互联网文化存档",
-  description: "每一个表情都是一段情绪，每一份合集都是一种文化。",
+  title: "视频转图片 · AI 视觉资产生产平台",
+  description: "把视频中的高价值瞬间自动转化为可下载、可传播、可复用的图片内容资产。",
 };
 
 export default function RootLayout({

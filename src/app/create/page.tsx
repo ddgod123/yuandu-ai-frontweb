@@ -26,6 +26,16 @@ type VideoJobItem = {
   output_formats?: string[];
   options?: Record<string, unknown>;
   metrics?: Record<string, unknown>;
+  billing?: {
+    actual_cost_cny?: number;
+    currency?: string;
+    pricing_version?: string;
+    charged_points?: number;
+    reserved_points?: number;
+    hold_status?: string;
+    point_per_cny?: number;
+    cost_markup_multiplier?: number;
+  };
 };
 
 type VideoJobListResponse = {
@@ -128,12 +138,56 @@ type VideoJobAI1DebugResponse = {
   trace?: Record<string, unknown>;
 };
 
+type VideoJobAI1PlanPatchResponse = {
+  plan_revision?: number;
+};
+
+type AI1EditableDraft = {
+  supplement_prompt: string;
+  objective: string;
+  style_direction: string;
+  must_capture_text: string;
+  avoid_text: string;
+  quality_semantic: string;
+  quality_clarity: string;
+  quality_loop: string;
+  quality_efficiency: string;
+  risk_flags_text: string;
+  max_blur_tolerance: "low" | "medium" | "high";
+  avoid_watermarks: boolean;
+  avoid_extreme_dark: boolean;
+  summary: string;
+  interactive_action: "proceed" | "need_clarify";
+  clarify_questions_text: string;
+};
+
 type AI1DebugTimelineStep = {
   key: string;
   title: string;
   status: string;
   summary: string;
   details?: Record<string, unknown>;
+};
+
+type AI1FieldAuditRow = {
+  key: string;
+  label: string;
+  instructionValue: string;
+  effectiveValue: string;
+  source: string;
+  edited: boolean;
+  drift: boolean;
+};
+
+type AI2CandidateExplainRow = {
+  rank: number;
+  frameName: string;
+  decisionKey: string;
+  decision: string;
+  rejectReason: string;
+  mustCaptureHits: string[];
+  avoidHits: string[];
+  summary: string;
 };
 
 type TimelineMessage = {
@@ -202,6 +256,34 @@ type EventPresentation = {
   ai3Card?: TimelineMessage["ai3Card"];
 };
 
+type AdvancedSceneOption = {
+  value: string;
+  label: string;
+  description?: string;
+  operator_identity?: string;
+  candidate_count_min?: number;
+  candidate_count_max?: number;
+};
+
+type AdvancedFocusOption = {
+  value: "portrait" | "action" | "vibe" | "text";
+  label: string;
+};
+
+type AdvancedSceneOptionsResponse = {
+  format?: string;
+  resolved_from?: string;
+  version?: string;
+  items?: Array<{
+    scene?: string;
+    label?: string;
+    description?: string;
+    operator_identity?: string;
+    candidate_count_min?: number;
+    candidate_count_max?: number;
+  }>;
+};
+
 const STATUS_LABEL: Record<string, string> = {
   queued: "排队中",
   running: "处理中",
@@ -251,6 +333,23 @@ const FALLBACK_FORMAT_OPTIONS: FormatOption[] = [
   { value: "gif", label: "GIF" },
 ];
 
+const FALLBACK_ADVANCED_SCENE_OPTIONS: AdvancedSceneOption[] = [
+  { value: "default", label: "通用截图", description: "默认平衡策略，适合大多数场景。" },
+  { value: "xiaohongshu", label: "小红书网感", description: "偏重高吸引力封面与清晰特写。" },
+  { value: "wallpaper", label: "手机壁纸", description: "偏重构图干净、主体居中、竖屏友好。" },
+  { value: "news", label: "新闻配图", description: "偏重纪实客观、信息表达完整。" },
+];
+const PNG_MAINLINE_SCENE_ALLOWLIST = ["default", "xiaohongshu"] as const;
+
+const ADVANCED_FOCUS_OPTIONS: AdvancedFocusOption[] = [
+  { value: "portrait", label: "人物与面部" },
+  { value: "action", label: "动作瞬间" },
+  { value: "vibe", label: "场景氛围" },
+  { value: "text", label: "文字字幕" },
+];
+
+const AI1_FIELD_AUDIT_EDITED_ONLY_STORAGE_KEY = "create_ai1_field_audit_edited_only_v1";
+
 function createMessageID() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -269,6 +368,36 @@ function formatBytes(value?: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatCNY(value?: number) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return "¥0.0000";
+  return `¥${amount.toFixed(4)}`;
+}
+
+function formatPoints(value?: number) {
+  const points = Number(value || 0);
+  if (!Number.isFinite(points) || points <= 0) return "0";
+  return `${Math.round(points)}`;
+}
+
+function formatHoldStatus(raw?: string) {
+  const value = (raw || "").trim().toLowerCase();
+  switch (value) {
+    case "settled":
+      return "已结算";
+    case "held":
+      return "预冻结";
+    case "released":
+      return "已释放";
+    case "cancelled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    default:
+      return raw || "-";
+  }
 }
 
 function prettyJSON(value: unknown) {
@@ -301,6 +430,24 @@ function parseFormatList(raw: unknown) {
     out.push(format);
   }
   return out;
+}
+
+function filterAdvancedSceneOptionsForMainline(format: string, options: AdvancedSceneOption[]) {
+  const normalizedFormat = format.trim().toLowerCase();
+  if (normalizedFormat !== "png") {
+    return options;
+  }
+  const allow = new Set<string>(PNG_MAINLINE_SCENE_ALLOWLIST);
+  const filtered = options.filter((item) => allow.has((item.value || "").trim().toLowerCase()));
+  if (filtered.length > 0) {
+    filtered.sort((a, b) => {
+      if (a.value === "default") return -1;
+      if (b.value === "default") return 1;
+      return a.label.localeCompare(b.label, "zh-CN");
+    });
+    return filtered;
+  }
+  return FALLBACK_ADVANCED_SCENE_OPTIONS.filter((item) => allow.has(item.value));
 }
 
 function resolveRequestedFormats(item: VideoJobItem) {
@@ -523,6 +670,79 @@ function stringListFromAny(value: unknown) {
   return out;
 }
 
+function parseEditableListText(raw: string) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const parts = raw
+    .split(/\r?\n|,|，|、|;/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const item of parts) {
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function joinEditableListText(items: unknown) {
+  const list = stringListFromAny(items);
+  return list.join("\n");
+}
+
+function mergeEditableList(base: string[], incoming: string[], limit = 16) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const append = (item: string) => {
+    const text = (item || "").trim();
+    if (!text) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(text);
+  };
+  for (const item of base) append(item);
+  for (const item of incoming) append(item);
+  if (limit > 0 && out.length > limit) {
+    return out.slice(0, limit);
+  }
+  return out;
+}
+
+function parseAI1SupplementPrompt(raw: string) {
+  const mustCapture: string[] = [];
+  const avoid: string[] = [];
+  const clarifyQuestions: string[] = [];
+  const lines = raw
+    .split(/[\r\n；;]+/g)
+    .map((item) => item.replace(/^[\s\-*•\d.、()（）]+/, "").trim())
+    .filter(Boolean);
+
+  const avoidPattern = /(不要|别|避免|规避|排除|去掉|去除|勿|不需要|avoid|exclude|without|skip)/i;
+  const questionPattern = /[?？]$/;
+  const questionPrefixPattern = /(请问|是否|能否|可否|需不需要|要不要)/;
+
+  for (const line of lines) {
+    if (!line) continue;
+    if (questionPattern.test(line) || questionPrefixPattern.test(line)) {
+      clarifyQuestions.push(line);
+      continue;
+    }
+    if (avoidPattern.test(line)) {
+      avoid.push(line);
+      continue;
+    }
+    mustCapture.push(line);
+  }
+
+  return {
+    mustCapture: mergeEditableList([], mustCapture, 16),
+    avoid: mergeEditableList([], avoid, 16),
+    clarifyQuestions: mergeEditableList([], clarifyQuestions, 6),
+  };
+}
+
 function numberFromAny(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
@@ -530,6 +750,124 @@ function numberFromAny(value: unknown) {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+function compactValue(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  if (typeof value === "string") return value.trim() || "-";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "-";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) {
+    const texts = value.map((item) => compactValue(item)).filter((item) => item && item !== "-");
+    return texts.length ? texts.join("、") : "-";
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "-";
+    }
+  }
+  return String(value);
+}
+
+function normalizeAuditText(value: string) {
+  return value.replace(/\s+/g, "").trim();
+}
+
+function firstNonEmptyText(...values: string[]) {
+  for (const value of values) {
+    const text = (value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function boolFromAny(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    return text === "true" || text === "1" || text === "yes" || text === "on";
+  }
+  return false;
+}
+
+function objectFromAny(value: unknown) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function objectListFromAny(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    out.push(item as Record<string, unknown>);
+  }
+  return out;
+}
+
+function decisionLabelFromKey(value: string) {
+  switch (value.trim().toLowerCase()) {
+    case "kept":
+      return "保留";
+    case "rejected":
+      return "拒绝";
+    case "dropped_by_budget":
+      return "预算淘汰";
+    case "selected":
+      return "入选候选";
+    default:
+      return value || "-";
+  }
+}
+
+function formatWeightValue(value: number, fallback: number) {
+  const n = Number.isFinite(value) && value > 0 ? value : fallback;
+  const rounded = Math.round(n * 1000) / 1000;
+  return String(rounded);
+}
+
+function parseWeightInput(raw: string) {
+  const text = raw.trim();
+  if (!text) return 0;
+  let n = Number(text);
+  if (!Number.isFinite(n)) return 0;
+  if (n > 1 && n <= 100) {
+    n = n / 100;
+  }
+  if (n < 0) n = 0;
+  if (n > 1) n = 1;
+  return n;
+}
+
+function csvEscape(value: unknown) {
+  let text = "";
+  if (typeof value === "string") {
+    text = value;
+  } else if (typeof value === "number") {
+    text = Number.isFinite(value) ? String(value) : "";
+  } else if (typeof value === "boolean") {
+    text = value ? "true" : "false";
+  } else if (value !== null && value !== undefined) {
+    text = String(value);
+  }
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
 }
 
 function businessGoalLabel(value: string) {
@@ -845,6 +1183,15 @@ export default function CreatePage() {
   const [selectedAIModel, setSelectedAIModel] = useState<string>("auto");
   const [promptText, setPromptText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [advancedSceneOptions, setAdvancedSceneOptions] = useState<AdvancedSceneOption[]>(
+    filterAdvancedSceneOptionsForMainline("png", FALLBACK_ADVANCED_SCENE_OPTIONS)
+  );
+  const [advancedSceneOptionsLoading, setAdvancedSceneOptionsLoading] = useState(false);
+  const [advancedSceneOptionsError, setAdvancedSceneOptionsError] = useState<string | null>(null);
+  const [advancedScene, setAdvancedScene] = useState<AdvancedSceneOption["value"]>("default");
+  const [advancedVisualFocus, setAdvancedVisualFocus] = useState<AdvancedFocusOption["value"][]>([]);
+  const [advancedEnableMatting, setAdvancedEnableMatting] = useState(false);
 
   const [timeline, setTimeline] = useState<TimelineMessage[]>([
     {
@@ -862,12 +1209,35 @@ export default function CreatePage() {
   const [ai1DebugError, setAI1DebugError] = useState<string | null>(null);
   const [ai1DebugTab, setAI1DebugTab] = useState<"timeline" | "normalized" | "request" | "response">("timeline");
   const [ai1TimelineAnomalyOnly, setAI1TimelineAnomalyOnly] = useState(false);
+  const [ai1FieldAuditEditedOnly, setAI1FieldAuditEditedOnly] = useState(false);
+  const [ai2CandidateExplainFilter, setAI2CandidateExplainFilter] = useState<"all" | "rejected" | "must_capture">("all");
   const [ai1IssueCopyState, setAI1IssueCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
   const [confirmingContinue, setConfirmingContinue] = useState(false);
   const [pendingRichActionKey, setPendingRichActionKey] = useState<string | null>(null);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
   const [showAI1DebugModal, setShowAI1DebugModal] = useState(false);
+  const [showAI1EditModal, setShowAI1EditModal] = useState(false);
+  const [savingAI1Edit, setSavingAI1Edit] = useState(false);
+  const [ai1EditError, setAI1EditError] = useState<string | null>(null);
+  const [ai1EditDraft, setAI1EditDraft] = useState<AI1EditableDraft>({
+    supplement_prompt: "",
+    objective: "",
+    style_direction: "",
+    must_capture_text: "",
+    avoid_text: "",
+    quality_semantic: "0.35",
+    quality_clarity: "0.35",
+    quality_loop: "0.05",
+    quality_efficiency: "0.25",
+    risk_flags_text: "",
+    max_blur_tolerance: "low",
+    avoid_watermarks: true,
+    avoid_extreme_dark: true,
+    summary: "",
+    interactive_action: "proceed",
+    clarify_questions_text: "",
+  });
   // const [taskListCompact, setTaskListCompact] = useState(true);
 
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -879,6 +1249,28 @@ export default function CreatePage() {
   const announcedActiveJobRef = useRef<number | null>(null);
 
   const activeJob = useMemo(() => jobs.find((item) => item.id === activeJobID) || null, [jobs, activeJobID]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(AI1_FIELD_AUDIT_EDITED_ONLY_STORAGE_KEY);
+      if (saved === "1") {
+        setAI1FieldAuditEditedOnly(true);
+      } else if (saved === "0") {
+        setAI1FieldAuditEditedOnly(false);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AI1_FIELD_AUDIT_EDITED_ONLY_STORAGE_KEY, ai1FieldAuditEditedOnly ? "1" : "0");
+    } catch {
+      // ignore storage errors
+    }
+  }, [ai1FieldAuditEditedOnly]);
+
   const activeJobAwaitingAI1Confirm = useMemo(
     () => (activeJob?.stage || "").trim().toLowerCase() === "awaiting_ai1_confirm",
     [activeJob]
@@ -899,7 +1291,18 @@ export default function CreatePage() {
   }, [activeJob]);
   const ai1DebugOutput = useMemo(() => {
     if (!ai1Debug || !ai1Debug.output || typeof ai1Debug.output !== "object") {
-      return { userReply: {}, ai2Instruction: {}, ai1OutputV2: {}, contractReport: {} };
+      return {
+        userReply: {},
+        ai2Instruction: {},
+        ai1OutputV2: {},
+        contractReport: {},
+        advancedOptions: {},
+        appliedStrategyProfile: {},
+        advancedSceneGuard: {},
+        strategyOverrideReport: {},
+        ai2ExecutionObservability: {},
+        pipelineAlignmentReport: {},
+      };
     }
     const output = ai1Debug.output as Record<string, unknown>;
     const userReply =
@@ -923,13 +1326,437 @@ export default function CreatePage() {
       trace.ai1_output_contract_v2 && typeof trace.ai1_output_contract_v2 === "object"
         ? (trace.ai1_output_contract_v2 as Record<string, unknown>)
         : {};
+    const advancedOptions =
+      output.advanced_options && typeof output.advanced_options === "object"
+        ? (output.advanced_options as Record<string, unknown>)
+        : userReply.advanced_options && typeof userReply.advanced_options === "object"
+          ? (userReply.advanced_options as Record<string, unknown>)
+          : {};
+    const appliedStrategyProfile =
+      output.applied_strategy_profile && typeof output.applied_strategy_profile === "object"
+        ? (output.applied_strategy_profile as Record<string, unknown>)
+        : userReply.applied_strategy_profile && typeof userReply.applied_strategy_profile === "object"
+          ? (userReply.applied_strategy_profile as Record<string, unknown>)
+          : {};
+    const advancedSceneGuard =
+      output.advanced_scene_guard_v1 && typeof output.advanced_scene_guard_v1 === "object"
+        ? (output.advanced_scene_guard_v1 as Record<string, unknown>)
+        : trace.advanced_scene_guard_v1 && typeof trace.advanced_scene_guard_v1 === "object"
+          ? (trace.advanced_scene_guard_v1 as Record<string, unknown>)
+          : {};
+    const strategyOverrideReport =
+      output.strategy_override_report_v1 && typeof output.strategy_override_report_v1 === "object"
+        ? (output.strategy_override_report_v1 as Record<string, unknown>)
+        : trace.strategy_override_report_v1 && typeof trace.strategy_override_report_v1 === "object"
+          ? (trace.strategy_override_report_v1 as Record<string, unknown>)
+          : {};
+    const ai2ExecutionObservability =
+      output.ai2_execution_observability_v1 && typeof output.ai2_execution_observability_v1 === "object"
+        ? (output.ai2_execution_observability_v1 as Record<string, unknown>)
+        : trace.ai2_execution_observability_v1 && typeof trace.ai2_execution_observability_v1 === "object"
+          ? (trace.ai2_execution_observability_v1 as Record<string, unknown>)
+          : {};
+    const pipelineAlignmentReport =
+      output.pipeline_alignment_report_v1 && typeof output.pipeline_alignment_report_v1 === "object"
+        ? (output.pipeline_alignment_report_v1 as Record<string, unknown>)
+        : trace.pipeline_alignment_report_v1 && typeof trace.pipeline_alignment_report_v1 === "object"
+          ? (trace.pipeline_alignment_report_v1 as Record<string, unknown>)
+          : {};
     return {
       userReply,
       ai2Instruction,
       ai1OutputV2,
       contractReport: Object.keys(contractFromOutput).length ? contractFromOutput : contractFromTrace,
+      advancedOptions,
+      appliedStrategyProfile,
+      advancedSceneGuard,
+      strategyOverrideReport,
+      ai2ExecutionObservability,
+      pipelineAlignmentReport,
     };
   }, [ai1Debug]);
+  const ai1PlanRevision = useMemo(() => {
+    const trace = ai1Debug?.trace && typeof ai1Debug.trace === "object" ? (ai1Debug.trace as Record<string, unknown>) : {};
+    const planMeta = trace.plan && typeof trace.plan === "object" ? (trace.plan as Record<string, unknown>) : {};
+    const revision = numberFromAny(planMeta.plan_revision);
+    return revision > 0 ? Math.trunc(revision) : 1;
+  }, [ai1Debug?.trace]);
+  const ai1EditedFieldSet = useMemo(() => {
+    const out = new Set<string>();
+    const ai1OutputTrace = objectFromAny(ai1DebugOutput.ai1OutputV2.trace);
+    for (const item of stringListFromAny(ai1OutputTrace.user_edited_fields)) {
+      out.add(item);
+    }
+    const trace = objectFromAny(ai1Debug?.trace);
+    const plan = objectFromAny(trace.plan);
+    const planJSON = objectFromAny(plan.plan_json);
+    for (const item of stringListFromAny(planJSON.last_user_edit_fields)) {
+      out.add(item);
+    }
+    return out;
+  }, [ai1Debug?.trace, ai1DebugOutput.ai1OutputV2]);
+  const ai1FieldAuditRows = useMemo<AI1FieldAuditRow[]>(() => {
+    const ai2Instruction = objectFromAny(ai1DebugOutput.ai2Instruction);
+    const ai2Obs = objectFromAny(ai1DebugOutput.ai2ExecutionObservability);
+    const instructionWeights = objectFromAny(ai2Instruction.quality_weights);
+    const effectiveWeights = objectFromAny(ai2Obs.effective_quality_weights);
+    const instructionRiskFlags = stringListFromAny(ai2Instruction.risk_flags);
+    const effectiveRiskFlags = stringListFromAny(ai2Obs.risk_flags_applied);
+    const instructionTechnical = objectFromAny(ai2Instruction.technical_reject);
+    const effectiveTechnical = objectFromAny(ai2Obs.technical_reject);
+
+    const rowList: AI1FieldAuditRow[] = [];
+    const pushRow = (
+      key: string,
+      label: string,
+      instructionValue: unknown,
+      effectiveValue: unknown,
+      source: string,
+      editedField: string
+    ) => {
+      const instructionText = compactValue(instructionValue);
+      const effectiveText = compactValue(effectiveValue);
+      rowList.push({
+        key,
+        label,
+        instructionValue: instructionText,
+        effectiveValue: effectiveText,
+        source,
+        edited: ai1EditedFieldSet.has(editedField),
+        drift: instructionText !== "-" && effectiveText !== "-" && normalizeAuditText(instructionText) !== normalizeAuditText(effectiveText),
+      });
+    };
+
+    pushRow(
+      "quality_weights",
+      "质量权重 quality_weights",
+      {
+        semantic: numberFromAny(instructionWeights.semantic),
+        clarity: numberFromAny(instructionWeights.clarity),
+        loop: numberFromAny(instructionWeights.loop),
+        efficiency: numberFromAny(instructionWeights.efficiency),
+      },
+      {
+        semantic: numberFromAny(effectiveWeights.semantic),
+        clarity: numberFromAny(effectiveWeights.clarity),
+        loop: numberFromAny(effectiveWeights.loop),
+        efficiency: numberFromAny(effectiveWeights.efficiency),
+      },
+      "ai2_instruction / ai2_execution_observability",
+      "quality_weights"
+    );
+    pushRow(
+      "risk_flags",
+      "风险标记 risk_flags",
+      instructionRiskFlags,
+      effectiveRiskFlags,
+      "ai2_instruction / ai2_execution_observability",
+      "risk_flags"
+    );
+    pushRow(
+      "max_blur_tolerance",
+      "模糊容忍 max_blur_tolerance",
+      instructionTechnical.max_blur_tolerance,
+      firstNonEmptyText(
+        stringFromAny(ai2Obs.max_blur_tolerance),
+        stringFromAny(effectiveTechnical.max_blur_tolerance),
+        stringFromAny(instructionTechnical.max_blur_tolerance)
+      ),
+      "ai2_instruction.technical_reject / ai2_execution_observability",
+      "max_blur_tolerance"
+    );
+    pushRow(
+      "avoid_watermarks",
+      "避开水印 avoid_watermarks",
+      instructionTechnical.avoid_watermarks,
+      firstNonEmptyText(
+        compactValue(effectiveTechnical.avoid_watermarks),
+        compactValue(instructionTechnical.avoid_watermarks)
+      ),
+      "ai2_instruction.technical_reject / ai2_execution_observability",
+      "avoid_watermarks"
+    );
+    pushRow(
+      "avoid_extreme_dark",
+      "避开极暗画面 avoid_extreme_dark",
+      instructionTechnical.avoid_extreme_dark,
+      firstNonEmptyText(
+        compactValue(effectiveTechnical.avoid_extreme_dark),
+        compactValue(instructionTechnical.avoid_extreme_dark)
+      ),
+      "ai2_instruction.technical_reject / ai2_execution_observability",
+      "avoid_extreme_dark"
+    );
+
+    return rowList;
+  }, [ai1DebugOutput.ai2ExecutionObservability, ai1DebugOutput.ai2Instruction, ai1EditedFieldSet]);
+  const ai1FieldAuditRowsForRender = useMemo(
+    () => (ai1FieldAuditEditedOnly ? ai1FieldAuditRows.filter((row) => row.edited) : ai1FieldAuditRows),
+    [ai1FieldAuditEditedOnly, ai1FieldAuditRows]
+  );
+  const ai1FieldAuditStats = useMemo(() => {
+    const edited = ai1FieldAuditRows.filter((row) => row.edited).length;
+    const drift = ai1FieldAuditRows.filter((row) => row.drift).length;
+    return { edited, drift, total: ai1FieldAuditRows.length };
+  }, [ai1FieldAuditRows]);
+  const ai2CandidateExplainability = useMemo(() => {
+    const ai2Obs = objectFromAny(ai1DebugOutput.ai2ExecutionObservability);
+    const explain = objectFromAny(ai2Obs.candidate_explainability);
+    const frameSummary = objectFromAny(ai2Obs.frame_quality_summary);
+    const rejectCounts = objectFromAny(frameSummary.reject_counts);
+    const decisionCountsRaw = objectFromAny(explain.decision_counts);
+    const decisionCounts = Object.entries(decisionCountsRaw)
+      .map(([key, value]) => {
+        const count = Math.max(0, Math.trunc(numberFromAny(value)));
+        return {
+          key: key.trim().toLowerCase(),
+          label: decisionLabelFromKey(key),
+          count,
+        };
+      })
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    const rows = objectListFromAny(explain.top_rows)
+      .map((row): AI2CandidateExplainRow => {
+        const decisionKey = stringFromAny(row.decision).trim().toLowerCase();
+        const frameName = firstNonEmptyText(stringFromAny(row.frame_name), stringFromAny(row.frame_path), "-");
+        return {
+          rank: Math.max(0, Math.trunc(numberFromAny(row.rank))),
+          frameName,
+          decisionKey,
+          decision: decisionLabelFromKey(decisionKey),
+          rejectReason: stringFromAny(row.reject_reason),
+          mustCaptureHits: stringListFromAny(row.must_capture_hits),
+          avoidHits: stringListFromAny(row.avoid_hits),
+          summary: stringFromAny(row.summary),
+        };
+      })
+      .filter((item) => item.rank > 0 || item.frameName !== "-");
+
+    return {
+      totalCandidates: Math.max(0, Math.trunc(numberFromAny(explain.total_candidates))),
+      mustCaptureHitFrames: Math.max(0, Math.trunc(numberFromAny(explain.must_capture_hit_frames))),
+      avoidHitFrames: Math.max(0, Math.trunc(numberFromAny(explain.avoid_hit_frames))),
+      scoringFormula: stringFromAny(ai2Obs.scoring_formula),
+      selectorVersion: stringFromAny(ai2Obs.selector_version),
+      scoringMode: stringFromAny(ai2Obs.scoring_mode),
+      selectionPolicy: stringFromAny(ai2Obs.selection_policy),
+      rejectCounts: {
+        blur: Math.max(0, Math.trunc(numberFromAny(rejectCounts.blur))),
+        brightness: Math.max(0, Math.trunc(numberFromAny(rejectCounts.brightness))),
+        exposure: Math.max(0, Math.trunc(numberFromAny(rejectCounts.exposure))),
+        resolution: Math.max(0, Math.trunc(numberFromAny(rejectCounts.resolution))),
+        stillBlur: Math.max(0, Math.trunc(numberFromAny(rejectCounts.still_blur))),
+        watermark: Math.max(0, Math.trunc(numberFromAny(rejectCounts.watermark))),
+        nearDup: Math.max(0, Math.trunc(numberFromAny(rejectCounts.near_dup))),
+        total: Math.max(0, Math.trunc(numberFromAny(rejectCounts.total_reject))),
+      },
+      decisionCounts,
+      rows,
+    };
+  }, [ai1DebugOutput.ai2ExecutionObservability]);
+  const ai1PipelineAlignment = useMemo(() => {
+    const report = objectFromAny(ai1DebugOutput.pipelineAlignmentReport);
+    const summary = objectFromAny(report.summary);
+    const scenario = objectFromAny(report.scenario);
+    const checks = objectListFromAny(report.consistency_checks).map((row, idx) => ({
+      key: stringFromAny(row.key) || `check_${idx}`,
+      label: stringFromAny(row.label) || "-",
+      status: stringFromAny(row.status).toLowerCase() || "warn",
+      detail: stringFromAny(row.detail),
+      value: objectFromAny(row.value),
+    }));
+    const passCount = Math.max(0, Math.trunc(numberFromAny(summary.pass_count)));
+    const warnCount = Math.max(0, Math.trunc(numberFromAny(summary.warn_count)));
+    const failCount = Math.max(0, Math.trunc(numberFromAny(summary.fail_count)));
+    return {
+      report,
+      scenario,
+      status: stringFromAny(summary.status).toLowerCase() || (failCount > 0 ? "fail" : warnCount > 0 ? "warn" : "pass"),
+      totalChecks: Math.max(0, Math.trunc(numberFromAny(summary.total_checks))) || checks.length,
+      passCount,
+      warnCount,
+      failCount,
+      checks,
+    };
+  }, [ai1DebugOutput.pipelineAlignmentReport]);
+  const ai1SceneBaselineDiff = useMemo(() => {
+    const diff = objectFromAny(ai1PipelineAlignment.report.scene_baseline_diff_v1);
+    const weightDelta = objectFromAny(diff.quality_weight_delta);
+    const weightDiffKeys = stringListFromAny(diff.weight_diff_keys);
+    const mustAdded = stringListFromAny(diff.must_capture_added);
+    const avoidAdded = stringListFromAny(diff.avoid_added);
+    const technicalChanged = stringListFromAny(diff.technical_reject_changed_keys);
+    return {
+      diff,
+      sceneChanged: Boolean(diff.scene_changed),
+      baselineScene: stringFromAny(diff.baseline_scene),
+      currentScene: stringFromAny(diff.current_scene),
+      summary: stringFromAny(diff.recommendation_summary),
+      weightDelta,
+      weightDiffKeys,
+      mustAdded,
+      avoidAdded,
+      technicalChanged,
+    };
+  }, [ai1PipelineAlignment.report]);
+  const exportPipelineAlignmentJSON = useCallback(() => {
+    if (!activeJob || !Object.keys(ai1PipelineAlignment.report || {}).length) return;
+    const ai2Node = objectFromAny(ai1PipelineAlignment.report.ai2);
+    const workerNode = objectFromAny(ai1PipelineAlignment.report.worker);
+    const ai3Node = objectFromAny(ai1PipelineAlignment.report.ai3);
+    const ai3Review = objectFromAny(ai3Node.review);
+    const sceneBaselineDiff = objectFromAny(ai1PipelineAlignment.report.scene_baseline_diff_v1);
+    const payload = {
+      schema_version: "pipeline_alignment_export_v1",
+      exported_at: new Date().toISOString(),
+      job_id: activeJob.id,
+      requested_format: stringFromAny(ai1PipelineAlignment.report.requested_format || ai1Debug?.requested_format || "").toLowerCase(),
+      scene: stringFromAny(ai1PipelineAlignment.scenario.scene_label || ai1PipelineAlignment.scenario.scene),
+      summary: {
+        status: ai1PipelineAlignment.status,
+        pass_count: ai1PipelineAlignment.passCount,
+        warn_count: ai1PipelineAlignment.warnCount,
+        fail_count: ai1PipelineAlignment.failCount,
+        total_checks: ai1PipelineAlignment.totalChecks,
+      },
+      checks: objectListFromAny(ai1PipelineAlignment.report.consistency_checks),
+      mainline_diagnostics: {
+        ai2: {
+          objective: stringFromAny(ai2Node.objective),
+          style_direction: stringFromAny(ai2Node.style_direction),
+          scoring_formula: stringFromAny(ai2Node.scoring_formula),
+          selection_policy: stringFromAny(ai2Node.selection_policy),
+          requested_quality_weights: objectFromAny(ai2Node.requested_quality_weights),
+          effective_quality_weights: objectFromAny(ai2Node.effective_quality_weights),
+        },
+        worker: {
+          stage: objectFromAny(workerNode.stage),
+          technical_reject: objectFromAny(workerNode.technical_reject),
+          frame_quality_summary: objectFromAny(workerNode.frame_quality_summary),
+        },
+        ai3: {
+          stage: stringFromAny(ai3Node.stage),
+          recommendation: stringFromAny(ai3Review.recommendation || ai3Review.final_recommendation),
+          summary_note: stringFromAny(ai3Review.summary_note),
+        },
+      },
+      scene_baseline_diff_v1: sceneBaselineDiff,
+    };
+    const jobPart = `job_${activeJob.id}`;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(`${jobPart}_pipeline_alignment_${ts}.json`, prettyJSON(payload), "application/json;charset=utf-8;");
+  }, [activeJob, ai1Debug?.requested_format, ai1PipelineAlignment]);
+  const exportPipelineAlignmentCSV = useCallback(() => {
+    if (!activeJob || !Object.keys(ai1PipelineAlignment.report || {}).length) return;
+    const ai2Node = objectFromAny(ai1PipelineAlignment.report.ai2);
+    const workerNode = objectFromAny(ai1PipelineAlignment.report.worker);
+    const ai3Node = objectFromAny(ai1PipelineAlignment.report.ai3);
+    const ai3Review = objectFromAny(ai3Node.review);
+    const workerStage = objectFromAny(workerNode.stage);
+    const sceneBaselineDiff = objectFromAny(ai1PipelineAlignment.report.scene_baseline_diff_v1);
+    const checks = objectListFromAny(ai1PipelineAlignment.report.consistency_checks);
+    const rows = (checks.length
+      ? checks
+      : [
+          {
+            key: "-",
+            label: "无检查项",
+            status: "warn",
+            detail: "报告中未包含 consistency_checks",
+            value: null,
+          },
+        ]
+    ).map((row) => ({
+      job_id: activeJob.id,
+      requested_format: stringFromAny(ai1PipelineAlignment.report.requested_format || ai1Debug?.requested_format || "").toLowerCase(),
+      scene: stringFromAny(ai1PipelineAlignment.scenario.scene_label || ai1PipelineAlignment.scenario.scene),
+      report_status: ai1PipelineAlignment.status,
+      check_key: stringFromAny(row.key),
+      check_label: stringFromAny(row.label),
+      check_status: stringFromAny(row.status),
+      check_detail: stringFromAny(row.detail),
+      check_value: row.value === null || typeof row.value === "undefined" ? "" : prettyJSON(row.value),
+      ai2_objective: stringFromAny(ai2Node.objective),
+      ai2_scoring_formula: stringFromAny(ai2Node.scoring_formula),
+      ai2_selection_policy: stringFromAny(ai2Node.selection_policy),
+      worker_stage: stringFromAny(workerStage.worker),
+      extraction_stage: stringFromAny(workerStage.extraction),
+      ai3_stage: stringFromAny(ai3Node.stage),
+      ai3_recommendation: stringFromAny(ai3Review.recommendation || ai3Review.final_recommendation),
+      baseline_scene: stringFromAny(sceneBaselineDiff.baseline_scene),
+      current_scene: stringFromAny(sceneBaselineDiff.current_scene),
+      baseline_summary: stringFromAny(sceneBaselineDiff.recommendation_summary),
+    }));
+    const headers = [
+      "job_id",
+      "requested_format",
+      "scene",
+      "report_status",
+      "check_key",
+      "check_label",
+      "check_status",
+      "check_detail",
+      "check_value",
+      "ai2_objective",
+      "ai2_scoring_formula",
+      "ai2_selection_policy",
+      "worker_stage",
+      "extraction_stage",
+      "ai3_stage",
+      "ai3_recommendation",
+      "baseline_scene",
+      "current_scene",
+      "baseline_summary",
+    ];
+    const csvLines = [headers, ...rows.map((row) => headers.map((key) => csvEscape(row[key as keyof typeof row])))].map((line) =>
+      line.join(",")
+    );
+    const jobPart = `job_${activeJob.id}`;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(
+      `${jobPart}_pipeline_alignment_${ts}.csv`,
+      `\uFEFF${csvLines.join("\r\n")}`,
+      "text/csv;charset=utf-8;"
+    );
+  }, [activeJob, ai1Debug?.requested_format, ai1PipelineAlignment]);
+  const ai2CandidateExplainRowsForRender = useMemo(() => {
+    if (ai2CandidateExplainFilter === "rejected") {
+      return ai2CandidateExplainability.rows.filter((row) => row.decisionKey === "rejected");
+    }
+    if (ai2CandidateExplainFilter === "must_capture") {
+      return ai2CandidateExplainability.rows.filter((row) => row.mustCaptureHits.length > 0);
+    }
+    return ai2CandidateExplainability.rows;
+  }, [ai2CandidateExplainFilter, ai2CandidateExplainability.rows]);
+  const exportAI2CandidateExplainCSV = useCallback(() => {
+    if (!ai2CandidateExplainRowsForRender.length) return;
+    const headers = ["任务ID", "筛选", "排名", "帧", "决策", "must_capture命中", "avoid触发", "解释", "拒绝原因"];
+    const rows = ai2CandidateExplainRowsForRender.map((row) => [
+      activeJob?.id || "",
+      ai2CandidateExplainFilter,
+      row.rank || "",
+      row.frameName || "",
+      row.decision || "",
+      row.mustCaptureHits.join(" | "),
+      row.avoidHits.join(" | "),
+      row.summary || "",
+      row.rejectReason || "",
+    ]);
+    const csvLines = [headers, ...rows].map((line) => line.map((item) => csvEscape(item)).join(","));
+    const blob = new Blob(["\uFEFF", csvLines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const jobPart = activeJob?.id ? `job_${activeJob.id}` : "job";
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    anchor.href = url;
+    anchor.download = `${jobPart}_ai2_candidate_explain_${ai2CandidateExplainFilter}_${ts}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }, [activeJob?.id, ai2CandidateExplainFilter, ai2CandidateExplainRowsForRender]);
   const ai1DebugTimeline = useMemo<AI1DebugTimelineStep[]>(() => {
     if (!ai1Debug) return [];
     const trace = ai1Debug?.trace && typeof ai1Debug.trace === "object" ? (ai1Debug.trace as Record<string, unknown>) : {};
@@ -1045,6 +1872,11 @@ export default function CreatePage() {
       },
       anomaly_steps: ai1DebugTimelineAnomalies,
       contract_report: ai1DebugOutput.contractReport,
+      advanced_options: ai1DebugOutput.advancedOptions,
+      applied_strategy_profile: ai1DebugOutput.appliedStrategyProfile,
+      advanced_scene_guard_v1: ai1DebugOutput.advancedSceneGuard,
+      strategy_override_report_v1: ai1DebugOutput.strategyOverrideReport,
+      pipeline_alignment_report_v1: ai1DebugOutput.pipelineAlignmentReport,
       model_request_summary:
         (ai1Debug.model_request?.payload_summary_v2 as Record<string, unknown> | undefined) || ai1Debug.model_request || {},
       model_response_summary:
@@ -1065,7 +1897,17 @@ export default function CreatePage() {
       setAI1IssueCopyState("error");
       window.setTimeout(() => setAI1IssueCopyState("idle"), 2200);
     }
-  }, [activeJob, ai1Debug, ai1DebugOutput.contractReport, ai1DebugTimelineAnomalies]);
+  }, [
+    activeJob,
+    ai1Debug,
+    ai1DebugOutput.appliedStrategyProfile,
+    ai1DebugOutput.advancedOptions,
+    ai1DebugOutput.advancedSceneGuard,
+    ai1DebugOutput.contractReport,
+    ai1DebugOutput.pipelineAlignmentReport,
+    ai1DebugOutput.strategyOverrideReport,
+    ai1DebugTimelineAnomalies,
+  ]);
   const ai1RichMessages = useMemo<RichMessage[]>(() => {
     if (!activeJob) return [];
 
@@ -1100,6 +1942,8 @@ export default function CreatePage() {
     if (!focusAnomalyOnly && (Object.keys(ai1DebugOutput.userReply).length || Object.keys(ai1DebugOutput.ai2Instruction).length)) {
       const userReply = ai1DebugOutput.userReply;
       const ai2Instruction = ai1DebugOutput.ai2Instruction;
+      const interactiveAction = stringFromAny(userReply.interactive_action).toLowerCase();
+      const needClarify = interactiveAction === "need_clarify";
       const riskWarning =
         userReply.risk_warning && typeof userReply.risk_warning === "object"
           ? (userReply.risk_warning as { has_risk?: boolean; message?: string })
@@ -1116,18 +1960,36 @@ export default function CreatePage() {
           strategy_summary: stringFromAny(userReply.strategy_summary),
           detected_tags: stringListFromAny(userReply.detected_tags),
           risk_warning: riskWarning,
+          confidence: numberFromAny(userReply.confidence),
+          clarify_questions: stringListFromAny(userReply.clarify_questions),
           estimated_eta_seconds: numberFromAny(userReply.estimated_eta_seconds),
           must_capture: stringListFromAny(ai2Instruction.must_capture),
           avoid: stringListFromAny(ai2Instruction.avoid),
           style_direction: stringFromAny(ai2Instruction.style_direction),
           objective: stringFromAny(ai2Instruction.objective),
-          interactive_action: stringFromAny(userReply.interactive_action),
+          interactive_action: interactiveAction,
+          quality_weights: objectFromAny(ai2Instruction.quality_weights) as Record<string, number>,
+          risk_flags: stringListFromAny(ai2Instruction.risk_flags),
+          technical_reject: objectFromAny(ai2Instruction.technical_reject) as {
+            max_blur_tolerance?: string;
+            avoid_watermarks?: boolean;
+            avoid_extreme_dark?: boolean;
+          },
+          advanced_options: ai1DebugOutput.advancedOptions,
+          applied_strategy_profile: ai1DebugOutput.appliedStrategyProfile,
+          strategy_override_report_v1: ai1DebugOutput.strategyOverrideReport,
         },
         actions: [
           {
             key: "confirm_ai1",
-            label: activeJobAwaitingAI1Confirm ? "确认方案并继续" : "当前无需确认",
+            label: activeJobAwaitingAI1Confirm ? (needClarify ? "补充后继续执行" : "确认方案并继续") : "当前无需确认",
             style: "primary",
+            disabled: !activeJobAwaitingAI1Confirm,
+          },
+          {
+            key: "edit_ai1_plan",
+            label: activeJobAwaitingAI1Confirm ? (needClarify ? "补充并编辑 AI1" : "编辑 AI1 方案") : "非确认态不可编辑",
+            style: "secondary",
             disabled: !activeJobAwaitingAI1Confirm,
           },
           {
@@ -1188,7 +2050,10 @@ export default function CreatePage() {
     activeJobRequestedFormats,
     activeJobAwaitingAI1Confirm,
     ai1Debug,
+    ai1DebugOutput.appliedStrategyProfile,
+    ai1DebugOutput.advancedOptions,
     ai1DebugOutput.ai2Instruction,
+    ai1DebugOutput.strategyOverrideReport,
     ai1DebugOutput.userReply,
     ai1DebugTimelineAnomalies.length,
     ai1DebugTimelineStepsForRender,
@@ -1261,6 +2126,65 @@ export default function CreatePage() {
     }
   }, []);
 
+  const loadAdvancedSceneOptions = useCallback(async (format: string) => {
+    const targetFormat = (format || "png").trim().toLowerCase() || "png";
+    setAdvancedSceneOptionsLoading(true);
+    setAdvancedSceneOptionsError(null);
+    try {
+      const res = await fetchWithAuthRetry(
+        `${API_BASE}/video-jobs/advanced-scene-options?format=${encodeURIComponent(targetFormat)}`
+      );
+      if (res.status === 401) {
+        clearAuthSession();
+        setIsAuthed(false);
+        setAdvancedSceneOptions(filterAdvancedSceneOptionsForMainline(targetFormat, FALLBACK_ADVANCED_SCENE_OPTIONS));
+        return;
+      }
+      if (!res.ok) {
+        throw new Error((await res.text()) || "加载高级场景失败");
+      }
+      const data = (await res.json()) as AdvancedSceneOptionsResponse;
+      const rows = Array.isArray(data.items) ? data.items : [];
+      const seen = new Set<string>();
+      const options: AdvancedSceneOption[] = [];
+      for (const item of rows) {
+        const value = String(item?.scene || "").trim().toLowerCase();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        options.push({
+          value,
+          label: String(item?.label || value).trim() || value,
+          description: String(item?.description || "").trim() || undefined,
+          operator_identity: String(item?.operator_identity || "").trim() || undefined,
+          candidate_count_min:
+            typeof item?.candidate_count_min === "number" && Number.isFinite(item.candidate_count_min)
+              ? Math.max(0, Math.round(item.candidate_count_min))
+              : undefined,
+          candidate_count_max:
+            typeof item?.candidate_count_max === "number" && Number.isFinite(item.candidate_count_max)
+              ? Math.max(0, Math.round(item.candidate_count_max))
+              : undefined,
+        });
+      }
+      if (!seen.has("default")) {
+        options.unshift(FALLBACK_ADVANCED_SCENE_OPTIONS[0]);
+      }
+      const finalOptions = options.length ? options : FALLBACK_ADVANCED_SCENE_OPTIONS;
+      finalOptions.sort((a, b) => {
+        if (a.value === "default") return -1;
+        if (b.value === "default") return 1;
+        return a.label.localeCompare(b.label, "zh-CN");
+      });
+      setAdvancedSceneOptions(filterAdvancedSceneOptionsForMainline(targetFormat, finalOptions));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "加载高级场景失败";
+      setAdvancedSceneOptionsError(msg);
+      setAdvancedSceneOptions(filterAdvancedSceneOptionsForMainline(targetFormat, FALLBACK_ADVANCED_SCENE_OPTIONS));
+    } finally {
+      setAdvancedSceneOptionsLoading(false);
+    }
+  }, []);
+
   const capabilityMap = useMemo(() => {
     const map = new Map<string, VideoFormatCapability>();
     for (const item of capabilities?.formats || []) {
@@ -1300,6 +2224,46 @@ export default function CreatePage() {
     () => AI_MODEL_OPTIONS.find((item) => item.value === selectedAIModel) || AI_MODEL_OPTIONS[0],
     [selectedAIModel]
   );
+  const selectedAdvancedSceneOption = useMemo(
+    () => advancedSceneOptions.find((item) => item.value === advancedScene) || advancedSceneOptions[0] || FALLBACK_ADVANCED_SCENE_OPTIONS[0],
+    [advancedScene, advancedSceneOptions]
+  );
+  const advancedSceneLabel = useMemo(
+    () => selectedAdvancedSceneOption?.label || "通用截图",
+    [selectedAdvancedSceneOption]
+  );
+  const selectedAdvancedSceneOperatorIdentity = useMemo(() => {
+    const value = selectedAdvancedSceneOption?.operator_identity;
+    if (!value) return "";
+    return String(value).trim();
+  }, [selectedAdvancedSceneOption]);
+  const selectedAdvancedSceneCandidateHint = useMemo(() => {
+    const minRaw = selectedAdvancedSceneOption?.candidate_count_min;
+    const maxRaw = selectedAdvancedSceneOption?.candidate_count_max;
+    const min = Number(minRaw);
+    const max = Number(maxRaw);
+    const hasMin = Number.isFinite(min) && min > 0;
+    const hasMax = Number.isFinite(max) && max > 0;
+    if (hasMin && hasMax) {
+      if (min === max) return `${min}`;
+      return min < max ? `${min} ~ ${max}` : `${max} ~ ${min}`;
+    }
+    if (hasMin) return `≥ ${min}`;
+    if (hasMax) return `≤ ${max}`;
+    return "";
+  }, [selectedAdvancedSceneOption]);
+  const toggleAdvancedFocus = useCallback((value: AdvancedFocusOption["value"]) => {
+    setAdvancedVisualFocus((prev) => {
+      const exists = prev.includes(value);
+      if (exists) {
+        return prev.filter((item) => item !== value);
+      }
+      if (prev.length >= 2) {
+        return [prev[1], value];
+      }
+      return [...prev, value];
+    });
+  }, []);
 
   const syncOneJob = useCallback((job: VideoJobItem) => {
     setJobs((prev) => {
@@ -1405,7 +2369,13 @@ export default function CreatePage() {
         params.set("since_id", String(currentCursor));
       }
 
-      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/events?${params.toString()}`);
+      let res: Response;
+      try {
+        res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/events?${params.toString()}`);
+      } catch (err) {
+        console.warn("[create] loadJobEvents network error", err);
+        return;
+      }
       if (res.status === 401) {
         clearAuthSession();
         setIsAuthed(false);
@@ -1456,12 +2426,27 @@ export default function CreatePage() {
   );
 
   const confirmContinueAfterAI1 = useCallback(
-    async (jobID: number) => {
+    async (jobID: number, revisionOverride?: number) => {
       if (!jobID || confirmingContinue) return;
       setConfirmingContinue(true);
       try {
+        const planRevision =
+          typeof revisionOverride === "number" && Number.isFinite(revisionOverride) && revisionOverride > 0
+            ? Math.trunc(revisionOverride)
+            : numberFromAny(
+                ((ai1Debug?.trace as Record<string, unknown> | undefined)?.plan as Record<string, unknown> | undefined)
+                  ?.plan_revision
+              );
+        const requestBody =
+          planRevision > 0
+            ? {
+                plan_revision: planRevision,
+              }
+            : undefined;
         const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/confirm-ai1`, {
           method: "POST",
+          headers: requestBody ? { "Content-Type": "application/json" } : undefined,
+          body: requestBody ? JSON.stringify(requestBody) : undefined,
         });
         if (res.status === 401) {
           clearAuthSession();
@@ -1482,7 +2467,7 @@ export default function CreatePage() {
           role: "assistant",
           name: "系统",
           level: "success",
-          text: "已发送继续指令，任务将恢复执行。",
+          text: planRevision > 0 ? `已确认 AI1（revision=${planRevision}），任务将恢复执行。` : "已发送继续指令，任务将恢复执行。",
           jobId: jobID,
         });
         await Promise.all([loadJobEvents(jobID, false), loadJobs()]);
@@ -1493,8 +2478,172 @@ export default function CreatePage() {
         setConfirmingContinue(false);
       }
     },
-    [appendTimeline, confirmingContinue, loadJobEvents, loadJobs]
+    [ai1Debug?.trace, appendTimeline, confirmingContinue, loadJobEvents, loadJobs]
   );
+  const openAI1PlanEditor = useCallback(() => {
+    const userReply = ai1DebugOutput.userReply;
+    const ai2Instruction = ai1DebugOutput.ai2Instruction;
+    const interactiveActionRaw = stringFromAny(userReply.interactive_action).toLowerCase();
+    const qualityWeights = objectFromAny(ai2Instruction.quality_weights);
+    const technicalReject = objectFromAny(ai2Instruction.technical_reject);
+    const maxBlurToleranceRaw = stringFromAny(technicalReject.max_blur_tolerance).toLowerCase();
+    const maxBlurTolerance: "low" | "medium" | "high" =
+      maxBlurToleranceRaw === "high" || maxBlurToleranceRaw === "medium" ? maxBlurToleranceRaw : "low";
+    const hasAvoidWatermarks = Object.prototype.hasOwnProperty.call(technicalReject, "avoid_watermarks");
+    const hasAvoidExtremeDark = Object.prototype.hasOwnProperty.call(technicalReject, "avoid_extreme_dark");
+    setAI1EditDraft({
+      supplement_prompt: "",
+      objective: stringFromAny(ai2Instruction.objective),
+      style_direction: stringFromAny(ai2Instruction.style_direction),
+      must_capture_text: joinEditableListText(ai2Instruction.must_capture),
+      avoid_text: joinEditableListText(ai2Instruction.avoid),
+      quality_semantic: formatWeightValue(numberFromAny(qualityWeights.semantic), 0.35),
+      quality_clarity: formatWeightValue(numberFromAny(qualityWeights.clarity), 0.35),
+      quality_loop: formatWeightValue(numberFromAny(qualityWeights.loop), 0.05),
+      quality_efficiency: formatWeightValue(numberFromAny(qualityWeights.efficiency), 0.25),
+      risk_flags_text: joinEditableListText(ai2Instruction.risk_flags),
+      max_blur_tolerance: maxBlurTolerance,
+      avoid_watermarks: hasAvoidWatermarks ? boolFromAny(technicalReject.avoid_watermarks) : true,
+      avoid_extreme_dark: hasAvoidExtremeDark ? boolFromAny(technicalReject.avoid_extreme_dark) : true,
+      summary: stringFromAny(userReply.summary),
+      interactive_action: interactiveActionRaw === "need_clarify" ? "need_clarify" : "proceed",
+      clarify_questions_text: joinEditableListText(userReply.clarify_questions),
+    });
+    setAI1EditError(null);
+    setShowAI1EditModal(true);
+  }, [ai1DebugOutput.ai2Instruction, ai1DebugOutput.userReply]);
+  const submitAI1PlanEdit = useCallback(async (autoContinue = false) => {
+    const jobID = activeJob?.id;
+    if (!jobID || savingAI1Edit || (autoContinue && confirmingContinue)) return;
+    setSavingAI1Edit(true);
+    setAI1EditError(null);
+    try {
+      const supplementPrompt = ai1EditDraft.supplement_prompt.trim();
+      const supplement = parseAI1SupplementPrompt(supplementPrompt);
+      const mustCapture = mergeEditableList(parseEditableListText(ai1EditDraft.must_capture_text), supplement.mustCapture, 16);
+      const avoid = mergeEditableList(parseEditableListText(ai1EditDraft.avoid_text), supplement.avoid, 16);
+      const clarifyQuestions = mergeEditableList(
+        parseEditableListText(ai1EditDraft.clarify_questions_text),
+        supplement.clarifyQuestions,
+        6
+      );
+      const qualityWeights = {
+        semantic: parseWeightInput(ai1EditDraft.quality_semantic),
+        clarity: parseWeightInput(ai1EditDraft.quality_clarity),
+        loop: parseWeightInput(ai1EditDraft.quality_loop),
+        efficiency: parseWeightInput(ai1EditDraft.quality_efficiency),
+      };
+      const qualityWeightSum =
+        qualityWeights.semantic + qualityWeights.clarity + qualityWeights.loop + qualityWeights.efficiency;
+      if (qualityWeightSum <= 0) {
+        throw new Error("质量权重至少需要一个大于 0 的值。");
+      }
+      const riskFlags = parseEditableListText(ai1EditDraft.risk_flags_text).map((item) =>
+        item.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      );
+      const interactiveAction = autoContinue ? "proceed" : ai1EditDraft.interactive_action;
+      const clarifyQuestionsPayload = interactiveAction === "need_clarify" ? clarifyQuestions : [];
+      const payload: Record<string, unknown> = {
+        plan_revision: ai1PlanRevision,
+        must_capture: mustCapture,
+        avoid,
+        style_direction: ai1EditDraft.style_direction.trim(),
+        interactive_action: interactiveAction,
+        clarify_questions: clarifyQuestionsPayload,
+        quality_weights: qualityWeights,
+        risk_flags: riskFlags,
+        max_blur_tolerance: ai1EditDraft.max_blur_tolerance,
+        avoid_watermarks: ai1EditDraft.avoid_watermarks,
+        avoid_extreme_dark: ai1EditDraft.avoid_extreme_dark,
+      };
+      const objective = ai1EditDraft.objective.trim();
+      if (objective) {
+        payload.objective = objective;
+      }
+      const summary = ai1EditDraft.summary.trim();
+      if (summary) {
+        payload.summary = summary;
+      }
+
+      const res = await fetchWithAuthRetry(`${API_BASE}/video-jobs/${jobID}/ai1-plan`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        setIsAuthed(false);
+        setGlobalError("登录已失效，请重新登录");
+        return;
+      }
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const text = await res.text();
+          detail = text.trim();
+        } catch {
+          detail = "";
+        }
+        if (res.status === 409) {
+          throw new Error("AI1 方案版本已更新，请先刷新调试视图后再编辑。");
+        }
+        throw new Error(detail || "保存 AI1 方案失败");
+      }
+      let patchResponse: VideoJobAI1PlanPatchResponse | null = null;
+      try {
+        patchResponse = (await res.json()) as VideoJobAI1PlanPatchResponse;
+      } catch {
+        patchResponse = null;
+      }
+      const nextRevision = numberFromAny(patchResponse?.plan_revision);
+      const displayRevision = nextRevision > 0 ? nextRevision : ai1PlanRevision + 1;
+      appendTimeline({
+        role: "assistant",
+        name: "系统",
+        level: "success",
+        text: autoContinue
+          ? `AI1 方案已更新（revision=${displayRevision}），正在继续执行后续流程。`
+          : `AI1 方案已更新（revision=${displayRevision}），请确认继续执行。`,
+        jobId: jobID,
+      });
+      setShowAI1EditModal(false);
+      if (autoContinue) {
+        await confirmContinueAfterAI1(jobID, nextRevision > 0 ? nextRevision : undefined);
+      }
+      await Promise.all([loadJobs(), loadJobEvents(jobID, false), loadAI1Debug(jobID, true)]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "保存 AI1 方案失败";
+      setAI1EditError(msg);
+    } finally {
+      setSavingAI1Edit(false);
+    }
+  }, [
+    activeJob?.id,
+    ai1EditDraft.avoid_text,
+    ai1EditDraft.avoid_extreme_dark,
+    ai1EditDraft.avoid_watermarks,
+    ai1EditDraft.clarify_questions_text,
+    ai1EditDraft.interactive_action,
+    ai1EditDraft.supplement_prompt,
+    ai1EditDraft.max_blur_tolerance,
+    ai1EditDraft.must_capture_text,
+    ai1EditDraft.objective,
+    ai1EditDraft.quality_clarity,
+    ai1EditDraft.quality_efficiency,
+    ai1EditDraft.quality_loop,
+    ai1EditDraft.quality_semantic,
+    ai1EditDraft.risk_flags_text,
+    ai1EditDraft.style_direction,
+    ai1EditDraft.summary,
+    ai1PlanRevision,
+    appendTimeline,
+    confirmContinueAfterAI1,
+    confirmingContinue,
+    loadAI1Debug,
+    loadJobEvents,
+    loadJobs,
+    savingAI1Edit,
+  ]);
   const handleRichMessageAction = useCallback(
     async (action: RichMessageAction) => {
       const key = (action.key || "").trim().toLowerCase();
@@ -1510,6 +2659,10 @@ export default function CreatePage() {
         }
         if (key === "copy_issue_context") {
           await copyAI1IssueContext();
+          return;
+        }
+        if (key === "edit_ai1_plan") {
+          openAI1PlanEditor();
           return;
         }
         if (key === "open_normalized_debug") {
@@ -1529,7 +2682,7 @@ export default function CreatePage() {
         setPendingRichActionKey(null);
       }
     },
-    [activeJob?.id, confirmContinueAfterAI1, copyAI1IssueContext, pendingRichActionKey]
+    [activeJob?.id, confirmContinueAfterAI1, copyAI1IssueContext, openAI1PlanEditor, pendingRichActionKey]
   );
 
   const handleJobStreamEnvelope = useCallback(
@@ -1598,7 +2751,7 @@ export default function CreatePage() {
       role: "user",
       level: "info",
       text: userPrompt || `请帮我把这个视频转换为 ${normalizedFormat.toUpperCase()} 图片。`,
-      meta: `格式：${normalizedFormat.toUpperCase()} · 模型：${modelLabel} · 文件：${file.name}`,
+      meta: `格式：${normalizedFormat.toUpperCase()} · 模型：${modelLabel} · 场景：${advancedSceneLabel} · 文件：${file.name}`,
     });
 
     try {
@@ -1764,6 +2917,11 @@ export default function CreatePage() {
         source_video_key: uploadKey,
         auto_highlight: true,
         output_formats: [normalizedFormat],
+        advanced_options: {
+          scene: advancedScene,
+          visual_focus: advancedVisualFocus,
+          enable_matting: advancedEnableMatting,
+        },
       };
 
       const createRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs`, {
@@ -1832,6 +2990,10 @@ export default function CreatePage() {
       setSubmitting(false);
     }
   }, [
+    advancedEnableMatting,
+    advancedScene,
+    advancedSceneLabel,
+    advancedVisualFocus,
     appendTimeline,
     capabilityMap,
     loadJobEvents,
@@ -1855,6 +3017,11 @@ export default function CreatePage() {
   }, [checkAuth, loadCapabilities, loadJobs]);
 
   useEffect(() => {
+    if (!isAuthed) return;
+    void loadAdvancedSceneOptions(selectedFormat);
+  }, [isAuthed, loadAdvancedSceneOptions, selectedFormat]);
+
+  useEffect(() => {
     if (!formatOptions.length) return;
     const exists = formatOptions.some((item) => item.value === selectedFormat && !item.disabled);
     if (exists) return;
@@ -1863,6 +3030,19 @@ export default function CreatePage() {
       setSelectedFormat(firstAvailable.value);
     }
   }, [formatOptions, selectedFormat]);
+
+  useEffect(() => {
+    if (!advancedSceneOptions.length) return;
+    const exists = advancedSceneOptions.some((item) => item.value === advancedScene);
+    if (exists) return;
+    const fallback =
+      advancedSceneOptions.find((item) => item.value === "default")?.value ||
+      advancedSceneOptions[0]?.value ||
+      "default";
+    if (fallback !== advancedScene) {
+      setAdvancedScene(fallback);
+    }
+  }, [advancedScene, advancedSceneOptions]);
 
   useEffect(() => {
     if (jobs.length === 0) return;
@@ -1925,12 +3105,24 @@ export default function CreatePage() {
   }, [showAI1DebugModal]);
 
   useEffect(() => {
+    if (!showAI1EditModal) {
+      setAI1EditError(null);
+    }
+  }, [showAI1EditModal]);
+
+  useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [timeline.length]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (showAI1EditModal) {
+        if (!savingAI1Edit) {
+          setShowAI1EditModal(false);
+        }
+        return;
+      }
       if (showAI1DebugModal) {
         setShowAI1DebugModal(false);
         return;
@@ -1942,7 +3134,7 @@ export default function CreatePage() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showAI1DebugModal, showTaskPanel]);
+  }, [savingAI1Edit, showAI1DebugModal, showAI1EditModal, showTaskPanel]);
 
   if (!authReady) {
     return (
@@ -2348,7 +3540,103 @@ export default function CreatePage() {
                 </button>
               </div>
             </div>
-            
+
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowAdvancedOptions((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-[12px] text-slate-600 transition hover:bg-slate-50"
+              >
+                <span>⚙️ 高级处理选项（可选）</span>
+                <span className="text-slate-400">{showAdvancedOptions ? "收起" : "展开"}</span>
+              </button>
+              {showAdvancedOptions ? (
+                <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                  <div className="text-[12px] font-semibold text-slate-700">场景与用途</div>
+                  {advancedSceneOptionsLoading ? (
+                    <div className="mt-1 text-[11px] text-slate-500">正在同步场景配置...</div>
+                  ) : null}
+                  {advancedSceneOptionsError ? (
+                    <div className="mt-1 text-[11px] text-amber-600">场景配置加载失败，已使用默认场景。</div>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {advancedSceneOptions.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => setAdvancedScene(item.value)}
+                        title={item.description || item.label}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                          advancedScene === item.value
+                            ? "border-emerald-300 bg-emerald-100 text-emerald-800"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedAdvancedSceneOption?.description ? (
+                    <div className="mt-1 text-[11px] text-slate-500">{selectedAdvancedSceneOption.description}</div>
+                  ) : null}
+                  {selectedAdvancedSceneOperatorIdentity ? (
+                    <div className="mt-1 text-[11px] text-slate-500">运营身份：{selectedAdvancedSceneOperatorIdentity}</div>
+                  ) : null}
+                  {selectedAdvancedSceneCandidateHint ? (
+                    <div className="mt-1 text-[11px] text-slate-500">建议候选数：{selectedAdvancedSceneCandidateHint}</div>
+                  ) : null}
+
+                  <div className="mt-3 text-[12px] font-semibold text-slate-700">视觉聚焦（最多 2 项）</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {ADVANCED_FOCUS_OPTIONS.map((item) => {
+                      const active = advancedVisualFocus.includes(item.value);
+                      return (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => toggleAdvancedFocus(item.value)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] transition ${
+                            active
+                              ? "border-blue-300 bg-blue-100 text-blue-800"
+                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-2 text-[12px] text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={advancedEnableMatting}
+                        onChange={(e) => setAdvancedEnableMatting(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-300"
+                      />
+                      启用人物主体抠图（透明底 PNG）
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdvancedScene(
+                          advancedSceneOptions.find((item) => item.value === "default")?.value ||
+                            advancedSceneOptions[0]?.value ||
+                            "default"
+                        );
+                        setAdvancedVisualFocus([]);
+                        setAdvancedEnableMatting(false);
+                      }}
+                      className="text-[11px] text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                    >
+                      重置高级选项
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
               {capabilitiesError ? (
                 <span className="text-rose-500">检测失败: {capabilitiesError}</span>
@@ -2455,6 +3743,22 @@ export default function CreatePage() {
                         </span>
                       </div>
 
+                      {activeJob.billing ? (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-[11px] text-slate-600">
+                          <div className="mb-1.5 font-semibold text-slate-700">任务账单</div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                            <span>真实成本</span>
+                            <span className="text-right font-medium text-slate-700">{formatCNY(activeJob.billing.actual_cost_cny)}</span>
+                            <span>扣除算力点</span>
+                            <span className="text-right font-medium text-slate-700">{formatPoints(activeJob.billing.charged_points)}</span>
+                            <span>预冻结点数</span>
+                            <span className="text-right">{formatPoints(activeJob.billing.reserved_points)}</span>
+                            <span>结算状态</span>
+                            <span className="text-right">{formatHoldStatus(activeJob.billing.hold_status)}</span>
+                          </div>
+                        </div>
+                      ) : null}
+
                       <div className="flex flex-wrap gap-2">
                         {activeJobAwaitingAI1Confirm ? (
                           <button
@@ -2518,6 +3822,325 @@ export default function CreatePage() {
                       当前没有选中任务
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showAI1EditModal ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              aria-label="关闭 AI1 编辑"
+              className="absolute inset-0 bg-slate-900/35 backdrop-blur-[1px]"
+              onClick={() => {
+                if (savingAI1Edit) return;
+                setShowAI1EditModal(false);
+              }}
+            />
+            <div className="relative z-10 mx-auto flex h-full w-full max-w-4xl items-start justify-center px-4 py-6 lg:px-6">
+              <div className="flex h-[calc(100vh-120px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">编辑 AI1 方案</div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      {activeJob ? `任务 #${activeJob.id} · revision ${ai1PlanRevision}` : "当前没有选中任务"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (savingAI1Edit) return;
+                      setShowAI1EditModal(false);
+                    }}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={savingAI1Edit}
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-4 py-4">
+                  {ai1EditError ? (
+                    <div className="mb-3 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{ai1EditError}</div>
+                  ) : null}
+                  <div className="space-y-3">
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">补充提示词（可选）</div>
+                      <textarea
+                        value={ai1EditDraft.supplement_prompt}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            supplement_prompt: event.target.value,
+                          }))
+                        }
+                        placeholder={"例如：\n重点抓住进球后庆祝动作\n避免裁到广告牌\n是否优先前 10 秒?"}
+                        className="h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        保存时会自动拆分补充内容并合并到 must_capture / avoid / clarify_questions。
+                      </div>
+                    </label>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">目标（objective）</div>
+                      <input
+                        value={ai1EditDraft.objective}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            objective: event.target.value,
+                          }))
+                        }
+                        placeholder="例如：提取进球瞬间的高清静态帧"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">风格（style_direction）</div>
+                      <input
+                        value={ai1EditDraft.style_direction}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            style_direction: event.target.value,
+                          }))
+                        }
+                        placeholder="例如：高清、主体居中、表情清晰"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">必须捕捉（must_capture）</div>
+                      <textarea
+                        value={ai1EditDraft.must_capture_text}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            must_capture_text: event.target.value,
+                          }))
+                        }
+                        placeholder={"每行一个词，例如：\n进球瞬间\n球员庆祝\n观众欢呼"}
+                        className="h-24 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">规避项（avoid）</div>
+                      <textarea
+                        value={ai1EditDraft.avoid_text}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            avoid_text: event.target.value,
+                          }))
+                        }
+                        placeholder={"每行一个词，例如：\n黑场\n重影\n强抖动"}
+                        className="h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">权重 semantic（0~1）</div>
+                        <input
+                          value={ai1EditDraft.quality_semantic}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              quality_semantic: event.target.value,
+                            }))
+                          }
+                          placeholder="例如：0.40"
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">权重 clarity（0~1）</div>
+                        <input
+                          value={ai1EditDraft.quality_clarity}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              quality_clarity: event.target.value,
+                            }))
+                          }
+                          placeholder="例如：0.40"
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">权重 loop（0~1）</div>
+                        <input
+                          value={ai1EditDraft.quality_loop}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              quality_loop: event.target.value,
+                            }))
+                          }
+                          placeholder="例如：0.05"
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">权重 efficiency（0~1）</div>
+                        <input
+                          value={ai1EditDraft.quality_efficiency}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              quality_efficiency: event.target.value,
+                            }))
+                          }
+                          placeholder="例如：0.15"
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">风险标记（risk_flags）</div>
+                      <textarea
+                        value={ai1EditDraft.risk_flags_text}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            risk_flags_text: event.target.value,
+                          }))
+                        }
+                        placeholder={"每行一个，例如：\nlow_light\nfast_motion"}
+                        className="h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">模糊容忍（max_blur_tolerance）</div>
+                        <select
+                          value={ai1EditDraft.max_blur_tolerance}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              max_blur_tolerance:
+                                event.target.value === "high" || event.target.value === "medium"
+                                  ? (event.target.value as "high" | "medium")
+                                  : "low",
+                            }))
+                          }
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        >
+                          <option value="low">low（严格）</option>
+                          <option value="medium">medium（平衡）</option>
+                          <option value="high">high（宽松）</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={ai1EditDraft.avoid_watermarks}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              avoid_watermarks: event.target.checked,
+                            }))
+                          }
+                        />
+                        避开水印（avoid_watermarks）
+                      </label>
+                      <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={ai1EditDraft.avoid_extreme_dark}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              avoid_extreme_dark: event.target.checked,
+                            }))
+                          }
+                        />
+                        避开极暗画面（avoid_extreme_dark）
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <div className="mb-1 text-xs font-medium text-slate-600">用户反馈摘要（summary）</div>
+                      <textarea
+                        value={ai1EditDraft.summary}
+                        onChange={(event) =>
+                          setAI1EditDraft((prev) => ({
+                            ...prev,
+                            summary: event.target.value,
+                          }))
+                        }
+                        placeholder="给用户看的自然语言说明"
+                        className="h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">交互动作（interactive_action）</div>
+                        <select
+                          value={ai1EditDraft.interactive_action}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              interactive_action: event.target.value === "need_clarify" ? "need_clarify" : "proceed",
+                            }))
+                          }
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        >
+                          <option value="proceed">proceed（可继续）</option>
+                          <option value="need_clarify">need_clarify（需补充）</option>
+                        </select>
+                      </label>
+
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">补充提问（clarify_questions）</div>
+                        <textarea
+                          value={ai1EditDraft.clarify_questions_text}
+                          onChange={(event) =>
+                            setAI1EditDraft((prev) => ({
+                              ...prev,
+                              clarify_questions_text: event.target.value,
+                            }))
+                          }
+                          placeholder={"每行一个问题"}
+                          className="h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-3">
+                  <button
+                    onClick={() => {
+                      if (savingAI1Edit) return;
+                      setShowAI1EditModal(false);
+                    }}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={savingAI1Edit}
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => void submitAI1PlanEdit(true)}
+                    className="rounded-md border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={savingAI1Edit || confirmingContinue || !activeJob}
+                  >
+                    {savingAI1Edit || confirmingContinue ? "处理中..." : "保存并继续执行"}
+                  </button>
+                  <button
+                    onClick={() => void submitAI1PlanEdit()}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={savingAI1Edit || !activeJob}
+                  >
+                    {savingAI1Edit ? "保存中..." : "保存并更新 AI1"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -2690,24 +4313,447 @@ export default function CreatePage() {
                           </div>
                         </div>
                       ) : (
-                        <pre className="h-[calc(100vh-330px)] min-h-[280px] overflow-auto rounded-lg border border-slate-200 bg-slate-900 p-4 text-[12px] leading-relaxed text-emerald-100">
-                          {ai1DebugTab === "normalized"
-                            ? prettyJSON({
-                                user_reply: ai1DebugOutput.userReply,
-                                ai2_instruction: ai1DebugOutput.ai2Instruction,
-                                ai1_output_v2: ai1DebugOutput.ai1OutputV2,
-                                contract_report: ai1DebugOutput.contractReport,
-                              })
-                            : ai1DebugTab === "request"
+                        <div className="space-y-2">
+                          {ai1DebugTab === "normalized" ? (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-700">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold">字段级审计（AI1→AI2）</span>
+                                  <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5">
+                                    重点字段 {ai1FieldAuditStats.total} 项
+                                  </span>
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    用户编辑字段 {ai1FieldAuditStats.edited}
+                                  </span>
+                                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                    指令/执行差异 {ai1FieldAuditStats.drift}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setAI1FieldAuditEditedOnly((prev) => !prev)}
+                                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                                    ai1FieldAuditEditedOnly
+                                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {ai1FieldAuditEditedOnly ? "显示全部字段" : "仅看用户编辑字段"}
+                                </button>
+                              </div>
+                              <div className="overflow-x-auto rounded-md border border-emerald-100 bg-white">
+                                <table className="min-w-full text-[11px]">
+                                  <thead className="bg-emerald-50 text-emerald-700">
+                                    <tr>
+                                      <th className="px-2 py-1.5 text-left font-semibold">字段</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">AI1 指令值</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">执行生效值</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">状态</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ai1FieldAuditRowsForRender.map((row) => (
+                                      <tr key={row.key} className="border-t border-emerald-50 text-slate-700">
+                                        <td className="px-2 py-1.5">
+                                          <div className="font-medium">{row.label}</div>
+                                          <div className="text-[10px] text-slate-400">{row.source}</div>
+                                        </td>
+                                        <td className="px-2 py-1.5 align-top">
+                                          <code className="break-all text-[11px]">{row.instructionValue}</code>
+                                        </td>
+                                        <td className="px-2 py-1.5 align-top">
+                                          <code className="break-all text-[11px]">{row.effectiveValue}</code>
+                                        </td>
+                                        <td className="px-2 py-1.5 align-top">
+                                          <div className="flex flex-wrap gap-1">
+                                            {row.edited ? (
+                                              <span className="rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">
+                                                用户编辑
+                                              </span>
+                                            ) : (
+                                              <span className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                                未编辑
+                                              </span>
+                                            )}
+                                            {row.drift ? (
+                                              <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                                                指令/执行有差异
+                                              </span>
+                                            ) : (
+                                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                                                一致
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {ai1FieldAuditRowsForRender.length === 0 ? (
+                                      <tr className="border-t border-emerald-50 text-slate-500">
+                                        <td className="px-2 py-3 text-center" colSpan={4}>
+                                          当前筛选下没有字段可展示。
+                                        </td>
+                                      </tr>
+                                    ) : null}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : null}
+                          {ai1DebugTab === "normalized" && Object.keys(ai1PipelineAlignment.report || {}).length ? (
+                            <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-indigo-700">
+                                  <span className="font-semibold">AI1→AI2→Worker→AI3 对照报告</span>
+                                  <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5">
+                                    检查项 {ai1PipelineAlignment.totalChecks}
+                                  </span>
+                                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                                    通过 {ai1PipelineAlignment.passCount}
+                                  </span>
+                                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                    风险 {ai1PipelineAlignment.warnCount}
+                                  </span>
+                                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                    失败 {ai1PipelineAlignment.failCount}
+                                  </span>
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    场景 {stringFromAny(ai1PipelineAlignment.scenario.scene_label || ai1PipelineAlignment.scenario.scene) || "-"}
+                                  </span>
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 ${
+                                      ai1PipelineAlignment.status === "pass"
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : ai1PipelineAlignment.status === "fail"
+                                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                                          : "border-amber-200 bg-amber-50 text-amber-700"
+                                    }`}
+                                  >
+                                    总状态 {ai1PipelineAlignment.status || "-"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={exportPipelineAlignmentJSON}
+                                    className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] text-indigo-700 hover:bg-indigo-100"
+                                  >
+                                    导出 JSON
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={exportPipelineAlignmentCSV}
+                                    className="rounded-md border border-indigo-200 bg-white px-2.5 py-1 text-[11px] text-indigo-700 hover:bg-indigo-50"
+                                  >
+                                    导出 CSV
+                                  </button>
+                                </div>
+                              </div>
+                              {ai1PipelineAlignment.checks.length ? (
+                                <div className="mb-2 flex flex-wrap gap-1.5">
+                                  {ai1PipelineAlignment.checks.slice(0, 8).map((check) => (
+                                    <span
+                                      key={check.key}
+                                      className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                                        check.status === "pass"
+                                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                          : check.status === "fail"
+                                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                                            : "border-amber-200 bg-amber-50 text-amber-700"
+                                      }`}
+                                      title={check.detail || check.label}
+                                    >
+                                      {check.label} · {check.status || "warn"}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <pre className="max-h-52 overflow-auto rounded-md border border-indigo-100 bg-white p-2 text-[11px] leading-relaxed text-slate-700">
+                                {prettyJSON(ai1PipelineAlignment.report)}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {ai1DebugTab === "normalized" && Object.keys(ai1SceneBaselineDiff.diff || {}).length ? (
+                            <div className="rounded-lg border border-teal-200 bg-teal-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-teal-700">
+                                <span className="font-semibold">场景基线差异（default vs 当前）</span>
+                                <span className="rounded-full border border-teal-200 bg-white px-2 py-0.5">
+                                  baseline {ai1SceneBaselineDiff.baselineScene || "-"}
+                                </span>
+                                <span className="rounded-full border border-teal-200 bg-white px-2 py-0.5">
+                                  current {ai1SceneBaselineDiff.currentScene || "-"}
+                                </span>
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 ${
+                                    ai1SceneBaselineDiff.sceneChanged
+                                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  }`}
+                                >
+                                  {ai1SceneBaselineDiff.sceneChanged ? "存在场景差异" : "当前即基线"}
+                                </span>
+                              </div>
+                              {ai1SceneBaselineDiff.summary ? (
+                                <div className="mb-2 rounded-md border border-teal-100 bg-white px-2 py-1 text-[11px] text-teal-700">
+                                  {ai1SceneBaselineDiff.summary}
+                                </div>
+                              ) : null}
+                              <div className="mb-2 flex flex-wrap gap-1.5 text-[11px]">
+                                {ai1SceneBaselineDiff.weightDiffKeys.length ? (
+                                  <span className="rounded-full border border-teal-200 bg-white px-2 py-0.5 text-teal-700">
+                                    权重差异: {ai1SceneBaselineDiff.weightDiffKeys.join("、")}
+                                  </span>
+                                ) : (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    权重差异: 无
+                                  </span>
+                                )}
+                                {ai1SceneBaselineDiff.mustAdded.length ? (
+                                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                                    must_capture新增: {ai1SceneBaselineDiff.mustAdded.join("、")}
+                                  </span>
+                                ) : null}
+                                {ai1SceneBaselineDiff.avoidAdded.length ? (
+                                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                    avoid新增: {ai1SceneBaselineDiff.avoidAdded.join("、")}
+                                  </span>
+                                ) : null}
+                                {ai1SceneBaselineDiff.technicalChanged.length ? (
+                                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                    门槛变化: {ai1SceneBaselineDiff.technicalChanged.join("、")}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <pre className="max-h-40 overflow-auto rounded-md border border-teal-100 bg-white p-2 text-[11px] leading-relaxed text-slate-700">
+                                {prettyJSON(ai1SceneBaselineDiff.diff)}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {ai1DebugTab === "normalized" && Object.keys(ai1DebugOutput.advancedSceneGuard || {}).length ? (
+                            <div className="rounded-lg border border-cyan-200 bg-cyan-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-cyan-700">
+                                <span className="font-semibold">PNG 主线场景收敛</span>
+                                <span className="rounded-full border border-cyan-200 bg-white px-2 py-0.5">
+                                  请求场景 {stringFromAny(ai1DebugOutput.advancedSceneGuard.requested_scene) || "-"}
+                                </span>
+                                <span className="rounded-full border border-cyan-200 bg-white px-2 py-0.5">
+                                  生效场景 {stringFromAny(ai1DebugOutput.advancedSceneGuard.applied_scene) || "-"}
+                                </span>
+                              </div>
+                              <pre className="max-h-40 overflow-auto rounded-md border border-cyan-100 bg-white p-2 text-[11px] leading-relaxed text-slate-700">
+                                {prettyJSON(ai1DebugOutput.advancedSceneGuard)}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {ai1DebugTab === "normalized" && Object.keys(ai1DebugOutput.strategyOverrideReport || {}).length ? (
+                            <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-violet-700">
+                                <span className="font-semibold">策略强约束覆盖报告</span>
+                                <span className="rounded-full border border-violet-200 bg-white px-2 py-0.5">
+                                  覆盖项 {numberFromAny(ai1DebugOutput.strategyOverrideReport.override_count) || 0}
+                                </span>
+                                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                  场景 {stringFromAny(ai1DebugOutput.strategyOverrideReport.scene_label || ai1DebugOutput.strategyOverrideReport.scene) || "-"}
+                                </span>
+                              </div>
+                              <pre className="max-h-52 overflow-auto rounded-md border border-violet-100 bg-white p-2 text-[11px] leading-relaxed text-slate-700">
+                                {prettyJSON(ai1DebugOutput.strategyOverrideReport)}
+                              </pre>
+                            </div>
+                          ) : null}
+                          {ai1DebugTab === "normalized" && (ai2CandidateExplainability.totalCandidates > 0 || ai2CandidateExplainability.rows.length) ? (
+                            <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-sky-700">
+                                <span className="font-semibold">AI2 候选解释（must_capture / avoid 命中）</span>
+                                <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5">
+                                  候选 {ai2CandidateExplainability.totalCandidates}
+                                </span>
+                                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                                  must_capture 命中帧 {ai2CandidateExplainability.mustCaptureHitFrames}
+                                </span>
+                                <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                  avoid 触发帧 {ai2CandidateExplainability.avoidHitFrames}
+                                </span>
+                                {ai2CandidateExplainability.decisionCounts.map((item) => (
+                                  <span
+                                    key={`${item.key}-${item.count}`}
+                                    className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600"
+                                  >
+                                    {item.label} {item.count}
+                                  </span>
+                                ))}
+                                {ai2CandidateExplainability.selectorVersion ? (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    选择器 {ai2CandidateExplainability.selectorVersion}
+                                  </span>
+                                ) : null}
+                                {ai2CandidateExplainability.scoringMode ? (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    打分模式 {ai2CandidateExplainability.scoringMode}
+                                  </span>
+                                ) : null}
+                                {ai2CandidateExplainability.selectionPolicy ? (
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    选帧策略 {ai2CandidateExplainability.selectionPolicy}
+                                  </span>
+                                ) : null}
+                              </div>
+                              {ai2CandidateExplainability.scoringFormula ? (
+                                <div className="mb-2 rounded-md border border-sky-100 bg-white px-2 py-1 text-[11px] text-sky-700">
+                                  打分公式：{ai2CandidateExplainability.scoringFormula}
+                                </div>
+                              ) : null}
+                              {ai2CandidateExplainability.rejectCounts.total > 0 ? (
+                                <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-600">
+                                    拒绝总数 {ai2CandidateExplainability.rejectCounts.total}
+                                  </span>
+                                  {ai2CandidateExplainability.rejectCounts.blur > 0 ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                      模糊 {ai2CandidateExplainability.rejectCounts.blur}
+                                    </span>
+                                  ) : null}
+                                  {ai2CandidateExplainability.rejectCounts.brightness > 0 ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                      亮度 {ai2CandidateExplainability.rejectCounts.brightness}
+                                    </span>
+                                  ) : null}
+                                  {ai2CandidateExplainability.rejectCounts.exposure > 0 ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                      曝光 {ai2CandidateExplainability.rejectCounts.exposure}
+                                    </span>
+                                  ) : null}
+                                  {ai2CandidateExplainability.rejectCounts.stillBlur > 0 ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                      清晰度门槛 {ai2CandidateExplainability.rejectCounts.stillBlur}
+                                    </span>
+                                  ) : null}
+                                  {ai2CandidateExplainability.rejectCounts.watermark > 0 ? (
+                                    <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                                      水印风险 {ai2CandidateExplainability.rejectCounts.watermark}
+                                    </span>
+                                  ) : null}
+                                  {ai2CandidateExplainability.rejectCounts.nearDup > 0 ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">
+                                      近重复 {ai2CandidateExplainability.rejectCounts.nearDup}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setAI2CandidateExplainFilter("all")}
+                                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                                    ai2CandidateExplainFilter === "all"
+                                      ? "border-sky-300 bg-sky-100 text-sky-800"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  全部
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setAI2CandidateExplainFilter("rejected")}
+                                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                                    ai2CandidateExplainFilter === "rejected"
+                                      ? "border-rose-300 bg-rose-100 text-rose-700"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  仅看被拒绝
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setAI2CandidateExplainFilter("must_capture")}
+                                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                                    ai2CandidateExplainFilter === "must_capture"
+                                      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  仅看命中 must_capture
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={exportAI2CandidateExplainCSV}
+                                  disabled={!ai2CandidateExplainRowsForRender.length}
+                                  className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  导出 CSV
+                                </button>
+                                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                                  当前显示 {ai2CandidateExplainRowsForRender.length}
+                                </span>
+                              </div>
+                              <div className="overflow-x-auto rounded-md border border-sky-100 bg-white">
+                                <table className="min-w-full text-[11px]">
+                                  <thead className="bg-sky-50 text-sky-700">
+                                    <tr>
+                                      <th className="px-2 py-1.5 text-left font-semibold">排名</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">帧</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">决策</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">must_capture 命中</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">avoid 触发</th>
+                                      <th className="px-2 py-1.5 text-left font-semibold">解释</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ai2CandidateExplainRowsForRender.map((row, idx) => (
+                                      <tr key={`${row.rank}-${row.frameName}-${idx}`} className="border-t border-sky-50 text-slate-700">
+                                        <td className="px-2 py-1.5">{row.rank || "-"}</td>
+                                        <td className="px-2 py-1.5">
+                                          <div className="max-w-[180px] truncate" title={row.frameName}>
+                                            {row.frameName}
+                                          </div>
+                                        </td>
+                                        <td className="px-2 py-1.5">{row.decision || "-"}</td>
+                                        <td className="px-2 py-1.5">
+                                          {row.mustCaptureHits.length ? row.mustCaptureHits.join("、") : "-"}
+                                        </td>
+                                        <td className="px-2 py-1.5">{row.avoidHits.length ? row.avoidHits.join("、") : "-"}</td>
+                                        <td className="px-2 py-1.5">
+                                          <div className="max-w-[320px] truncate" title={row.summary || row.rejectReason || "-"}>
+                                            {row.summary || row.rejectReason || "-"}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {ai2CandidateExplainRowsForRender.length === 0 ? (
+                                      <tr className="border-t border-sky-50 text-slate-500">
+                                        <td className="px-2 py-3 text-center" colSpan={6}>
+                                          当前筛选下暂无候选解释详情。
+                                        </td>
+                                      </tr>
+                                    ) : null}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : null}
+                          <pre className="h-[calc(100vh-430px)] min-h-[220px] overflow-auto rounded-lg border border-slate-200 bg-slate-900 p-4 text-[12px] leading-relaxed text-emerald-100">
+                            {ai1DebugTab === "normalized"
                               ? prettyJSON({
-                                  input: ai1Debug?.input,
-                                  model_request: ai1Debug?.model_request,
+                                  user_reply: ai1DebugOutput.userReply,
+                                  ai2_instruction: ai1DebugOutput.ai2Instruction,
+                                  ai2_execution_observability_v1: ai1DebugOutput.ai2ExecutionObservability,
+                                  ai1_output_v2: ai1DebugOutput.ai1OutputV2,
+                                  contract_report: ai1DebugOutput.contractReport,
+                                  advanced_scene_guard_v1: ai1DebugOutput.advancedSceneGuard,
+                                  strategy_override_report_v1: ai1DebugOutput.strategyOverrideReport,
+                                  pipeline_alignment_report_v1: ai1DebugOutput.pipelineAlignmentReport,
                                 })
-                              : prettyJSON({
-                                  model_response: ai1Debug?.model_response,
-                                  trace: ai1Debug?.trace,
-                                })}
-                        </pre>
+                              : ai1DebugTab === "request"
+                                ? prettyJSON({
+                                    input: ai1Debug?.input,
+                                    model_request: ai1Debug?.model_request,
+                                  })
+                                : prettyJSON({
+                                    model_response: ai1Debug?.model_response,
+                                    trace: ai1Debug?.trace,
+                                  })}
+                          </pre>
+                        </div>
                       )}
                     </div>
                   ) : (

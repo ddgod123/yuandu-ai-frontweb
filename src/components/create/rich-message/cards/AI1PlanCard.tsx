@@ -24,7 +24,39 @@ export function AI1PlanCard({ payload, actions, onAction, pendingActionKey }: AI
   const avoid = Array.isArray(payload.avoid) ? payload.avoid : [];
   const hasRisk = Boolean(payload.risk_warning?.has_risk);
   const eta = Number(payload.estimated_eta_seconds || 0);
+  const confidence = Number(payload.confidence || 0);
+  const clarifyQuestions = Array.isArray(payload.clarify_questions) ? payload.clarify_questions : [];
   const hasPendingAction = Boolean(pendingActionKey);
+  const advancedOptions =
+    payload.advanced_options && typeof payload.advanced_options === "object"
+      ? (payload.advanced_options as Record<string, unknown>)
+      : {};
+  const appliedStrategy =
+    payload.applied_strategy_profile && typeof payload.applied_strategy_profile === "object"
+      ? (payload.applied_strategy_profile as Record<string, unknown>)
+      : {};
+  const strategyOverrideReport =
+    payload.strategy_override_report_v1 && typeof payload.strategy_override_report_v1 === "object"
+      ? (payload.strategy_override_report_v1 as Record<string, unknown>)
+      : {};
+  const strategyOverrideCount = Number(strategyOverrideReport.override_count || 0);
+  const sceneLabel =
+    (typeof appliedStrategy.scene_label === "string" && appliedStrategy.scene_label.trim()) ||
+    (typeof advancedOptions.scene === "string" && advancedOptions.scene.trim()) ||
+    "-";
+  const visualFocus = Array.isArray(advancedOptions.visual_focus)
+    ? advancedOptions.visual_focus.map((item) => String(item)).filter(Boolean)
+    : [];
+  const enableMatting = Boolean(advancedOptions.enable_matting);
+  const qualityWeights =
+    payload.quality_weights && typeof payload.quality_weights === "object"
+      ? (payload.quality_weights as Record<string, number>)
+      : {};
+  const riskFlags = Array.isArray(payload.risk_flags) ? payload.risk_flags : [];
+  const technicalReject =
+    payload.technical_reject && typeof payload.technical_reject === "object"
+      ? payload.technical_reject
+      : {};
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 shadow-sm">
@@ -42,8 +74,47 @@ export function AI1PlanCard({ payload, actions, onAction, pendingActionKey }: AI
         <div>风格：{payload.style_direction || "-"}</div>
         <div>目标：{payload.objective || "-"}</div>
         <div>交互动作：{payload.interactive_action || "-"}</div>
+        <div>置信度：{confidence > 0 ? `${Math.round(confidence * 100)}%` : "-"}</div>
         <div>预估耗时：{eta > 0 ? `${eta}s` : "-"}</div>
+        <div>场景策略：{sceneLabel}</div>
+        <div>策略覆盖：{strategyOverrideCount > 0 ? `${strategyOverrideCount} 项` : "无"}</div>
+        <div>抠图开关：{enableMatting ? "开启" : "关闭"}</div>
+        <div>
+          权重：S {Number(qualityWeights.semantic || 0).toFixed(2)} / C {Number(qualityWeights.clarity || 0).toFixed(2)} / L{" "}
+          {Number(qualityWeights.loop || 0).toFixed(2)} / E {Number(qualityWeights.efficiency || 0).toFixed(2)}
+        </div>
+        <div>
+          技术门槛：模糊={String(technicalReject.max_blur_tolerance || "-")} · 水印=
+          {technicalReject.avoid_watermarks ? "避开" : "允许"} · 暗光=
+          {technicalReject.avoid_extreme_dark ? "避开" : "允许"}
+        </div>
       </div>
+
+      {riskFlags.length ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {riskFlags.map((flag, idx) => (
+            <span
+              key={`${flag}-${idx}`}
+              className="max-w-[220px] truncate rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700"
+            >
+              风险：{flag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {visualFocus.length ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {visualFocus.map((focus, idx) => (
+            <span
+              key={`${focus}-${idx}`}
+              className="max-w-[220px] truncate rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
+            >
+              聚焦：{focus}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {tags.length ? (
         <div className="mt-2 flex flex-wrap gap-1">
@@ -96,6 +167,17 @@ export function AI1PlanCard({ payload, actions, onAction, pendingActionKey }: AI
       {hasRisk ? (
         <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
           风险提示：{payload.risk_warning?.message || "检测到潜在风险，请确认后继续。"}
+        </div>
+      ) : null}
+
+      {clarifyQuestions.length ? (
+        <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs text-blue-800">
+          <div className="mb-1 font-semibold">建议补充信息</div>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {clarifyQuestions.slice(0, 4).map((question, idx) => (
+              <li key={`${question}-${idx}`}>{question}</li>
+            ))}
+          </ul>
         </div>
       ) : null}
 

@@ -41,12 +41,24 @@ export type AI1PlanCardPayload = {
     has_risk?: boolean;
     message?: string;
   };
+  confidence?: number;
+  clarify_questions?: string[];
   estimated_eta_seconds?: number;
   must_capture?: string[];
   avoid?: string[];
   style_direction?: string;
   objective?: string;
   interactive_action?: "proceed" | "need_clarify" | string;
+  quality_weights?: Record<string, number>;
+  risk_flags?: string[];
+  technical_reject?: {
+    max_blur_tolerance?: string;
+    avoid_watermarks?: boolean;
+    avoid_extreme_dark?: boolean;
+  };
+  advanced_options?: Record<string, unknown>;
+  applied_strategy_profile?: Record<string, unknown>;
+  strategy_override_report_v1?: Record<string, unknown>;
 };
 
 export type ProcessingStatusPayload = {
@@ -96,4 +108,3 @@ export type RichMessageStreamEnvelope = {
   schema_version: "ui_message_v1";
   message: RichMessage;
 };
-

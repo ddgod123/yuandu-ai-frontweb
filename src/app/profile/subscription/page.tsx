@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 import {
@@ -122,6 +123,78 @@ type LatestCollectionRedeemCard = {
   expires_at?: string;
 };
 
+type ComputeAccountSnapshot = {
+  user_id?: number;
+  available_points?: number;
+  frozen_points?: number;
+  debt_points?: number;
+  total_consumed_points?: number;
+  total_recharged_points?: number;
+  point_per_cny?: number;
+  cost_markup_multiplier?: number;
+};
+
+type ComputeLedgerItem = {
+  id: number;
+  job_id?: number;
+  type?: string;
+  points?: number;
+  remark?: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
+
+type ComputeAccountSummaryResponse = {
+  account?: ComputeAccountSnapshot;
+  ledgers?: ComputeLedgerItem[];
+};
+
+type ComputeRedeemValidateResponse = {
+  valid: boolean;
+  message: string;
+  code_mask?: string;
+  granted_points?: number;
+  duration_days?: number;
+  starts_at?: string;
+  expires_at?: string;
+  status?: string;
+};
+
+type ComputeRedeemSubmitResponse = {
+  error?: string;
+  message?: string;
+  code_mask?: string;
+  granted_points?: number;
+  duration_days?: number;
+  starts_at?: string;
+  expires_at?: string;
+  used_count?: number;
+  max_uses?: number;
+  account?: ComputeAccountSnapshot;
+};
+
+type ComputeRedeemRecord = {
+  id: number;
+  code_mask?: string;
+  granted_points?: number;
+  granted_starts_at?: string;
+  granted_expires_at?: string;
+  created_at?: string;
+};
+
+type ComputeRedeemRecordResponse = {
+  items?: ComputeRedeemRecord[];
+};
+
+type LatestComputeRedeemCard = {
+  code_mask?: string;
+  granted_points?: number;
+  duration_days?: number;
+  starts_at?: string;
+  expires_at?: string;
+  available_points?: number;
+};
+
 const DEFAULT_AVATAR = "https://api.dicebear.com/7.x/adventurer/svg?seed=emoji";
 const USER_LEVEL_LABELS: Record<string, string> = {
   free: "基础用户",
@@ -225,6 +298,57 @@ function getRemainingDays(expiresAt?: string) {
   return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
 }
 
+function getComputeLedgerTypeLabel(type?: string) {
+  const key = normalizeKey(type);
+  switch (key) {
+    case "reserve":
+      return "任务预扣";
+    case "release":
+      return "任务退回";
+    case "settle":
+      return "任务结算";
+    case "adjust":
+      return "兑换/调整";
+    case "init_grant":
+      return "初始赠送";
+    default:
+      return type || "-";
+  }
+}
+
+function numberFromAny(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function pointHoldStatusLabel(value?: string) {
+  const key = normalizeKey(value);
+  switch (key) {
+    case "settled":
+      return "已结算";
+    case "held":
+      return "预冻结";
+    case "released":
+      return "已释放";
+    case "cancelled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    default:
+      return value || "-";
+  }
+}
+
+function formatCNYValue(value: unknown) {
+  const n = numberFromAny(value);
+  if (n <= 0) return "-";
+  return `¥${n.toFixed(4)}`;
+}
+
 export default function SubscriptionPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -242,6 +366,16 @@ export default function SubscriptionPage() {
   const [latestCollectionRedeem, setLatestCollectionRedeem] = useState<LatestCollectionRedeemCard | null>(null);
   const [collectionEntitlements, setCollectionEntitlements] = useState<CollectionDownloadEntitlement[]>([]);
   const [collectionEntitlementsLoading, setCollectionEntitlementsLoading] = useState(false);
+  const [computeAccount, setComputeAccount] = useState<ComputeAccountSnapshot | null>(null);
+  const [computeLedgers, setComputeLedgers] = useState<ComputeLedgerItem[]>([]);
+  const [computeRedeemCode, setComputeRedeemCode] = useState("");
+  const [computeValidating, setComputeValidating] = useState(false);
+  const [computeRedeeming, setComputeRedeeming] = useState(false);
+  const [computeValidation, setComputeValidation] = useState<ComputeRedeemValidateResponse | null>(null);
+  const [latestComputeRedeem, setLatestComputeRedeem] = useState<LatestComputeRedeemCard | null>(null);
+  const [computeRedeemRecords, setComputeRedeemRecords] = useState<ComputeRedeemRecord[]>([]);
+  const [computeRecordsLoading, setComputeRecordsLoading] = useState(false);
+  const [computeMessage, setComputeMessage] = useState<string | null>(null);
   const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -328,6 +462,50 @@ export default function SubscriptionPage() {
     }
   }, [router]);
 
+  const loadComputeAccount = useCallback(async () => {
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-account?limit=30`);
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      if (!res.ok) {
+        setComputeAccount(null);
+        setComputeLedgers([]);
+        return;
+      }
+      const data = (await res.json()) as ComputeAccountSummaryResponse;
+      setComputeAccount(data.account || null);
+      setComputeLedgers(Array.isArray(data.ledgers) ? data.ledgers : []);
+    } catch {
+      setComputeAccount(null);
+      setComputeLedgers([]);
+    }
+  }, [router]);
+
+  const loadComputeRedeemRecords = useCallback(async () => {
+    setComputeRecordsLoading(true);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-records?page=1&page_size=20`);
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      if (!res.ok) {
+        setComputeRedeemRecords([]);
+        return;
+      }
+      const data = (await res.json()) as ComputeRedeemRecordResponse;
+      setComputeRedeemRecords(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setComputeRedeemRecords([]);
+    } finally {
+      setComputeRecordsLoading(false);
+    }
+  }, [router]);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -338,6 +516,8 @@ export default function SubscriptionPage() {
         }
         await loadRedeemRecords();
         await loadCollectionEntitlements();
+        await loadComputeAccount();
+        await loadComputeRedeemRecords();
       } catch {
         setMessage("加载订阅信息失败，请稍后重试");
       } finally {
@@ -346,7 +526,7 @@ export default function SubscriptionPage() {
     };
 
     load();
-  }, [loadCollectionEntitlements, loadProfile, loadRedeemRecords]);
+  }, [loadCollectionEntitlements, loadComputeAccount, loadComputeRedeemRecords, loadProfile, loadRedeemRecords]);
 
   const handleValidate = async () => {
     const code = redeemCode.trim();
@@ -499,6 +679,84 @@ export default function SubscriptionPage() {
       setCollectionMessage("兑换失败，请稍后重试");
     } finally {
       setCollectionRedeeming(false);
+    }
+  };
+
+  const handleValidateComputeCode = async () => {
+    const code = computeRedeemCode.trim();
+    if (!code) {
+      setComputeMessage("请输入算力兑换码");
+      return;
+    }
+    setComputeValidating(true);
+    setComputeMessage(null);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-code/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      const data = (await res.json()) as ComputeRedeemValidateResponse & { error?: string };
+      if (!res.ok) {
+        setComputeMessage(data?.error || "验证失败，请稍后重试");
+        return;
+      }
+      setComputeValidation(data);
+      setComputeMessage(data.message || (data.valid ? "兑换码可用" : "兑换码不可用"));
+    } catch {
+      setComputeMessage("验证失败，请稍后重试");
+    } finally {
+      setComputeValidating(false);
+    }
+  };
+
+  const handleRedeemComputeCode = async () => {
+    const code = computeRedeemCode.trim();
+    if (!code) {
+      setComputeMessage("请输入算力兑换码");
+      return;
+    }
+    setComputeRedeeming(true);
+    setComputeMessage(null);
+    try {
+      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-code/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (res.status === 401) {
+        clearAuthSession();
+        router.replace("/login");
+        return;
+      }
+      const data = (await res.json()) as ComputeRedeemSubmitResponse;
+      if (!res.ok) {
+        setComputeMessage(data?.error || "兑换失败，请稍后重试");
+        return;
+      }
+      setLatestComputeRedeem({
+        code_mask: data.code_mask,
+        granted_points: data.granted_points,
+        duration_days: data.duration_days,
+        starts_at: data.starts_at,
+        expires_at: data.expires_at,
+        available_points: data.account?.available_points,
+      });
+      setComputeValidation(null);
+      setComputeRedeemCode("");
+      setComputeMessage(data?.message || "兑换成功");
+      if (data.account) setComputeAccount(data.account);
+      await loadComputeAccount();
+      await loadComputeRedeemRecords();
+    } catch {
+      setComputeMessage("兑换失败，请稍后重试");
+    } finally {
+      setComputeRedeeming(false);
     }
   };
 
@@ -802,6 +1060,190 @@ export default function SubscriptionPage() {
                       <tr>
                         <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                           暂无合集次卡权益
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* 算力点兑换 */}
+          <div className="mt-8 rounded-[2.5rem] border border-violet-100 bg-violet-50/30 p-8 md:p-10">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500 text-white shadow-md shadow-violet-200">
+                  <Zap size={18} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">算力点兑换</h2>
+                  <p className="text-xs font-bold uppercase tracking-widest text-violet-600/60">
+                    Compute Credits Redeem
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-violet-100 bg-white px-4 py-2 text-xs font-bold text-slate-600">
+                可用算力点：<span className="text-violet-600">{computeAccount?.available_points ?? 0}</span>
+                <span className="mx-2 text-slate-300">|</span>
+                计费倍率：{computeAccount?.cost_markup_multiplier || 2}x
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <input
+                value={computeRedeemCode}
+                onChange={(event) => {
+                  setComputeRedeemCode(event.target.value);
+                  setComputeValidation(null);
+                }}
+                placeholder="输入算力兑换码"
+                className="h-14 flex-1 rounded-2xl border border-violet-100 bg-white px-5 text-base font-bold tracking-wider text-slate-800 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10"
+              />
+              <button
+                type="button"
+                disabled={computeValidating}
+                onClick={handleValidateComputeCode}
+                className="h-14 rounded-2xl border border-violet-200 bg-white px-6 text-sm font-black text-violet-700 transition hover:bg-violet-50 disabled:opacity-60"
+              >
+                {computeValidating ? "验证中..." : "验证"}
+              </button>
+              <button
+                type="button"
+                disabled={computeRedeeming}
+                onClick={handleRedeemComputeCode}
+                className="h-14 rounded-2xl bg-violet-600 px-8 text-sm font-black text-white shadow-lg shadow-violet-200 transition hover:bg-violet-500 disabled:opacity-60"
+              >
+                {computeRedeeming ? "兑换中..." : "立即兑换"}
+              </button>
+            </div>
+
+            {computeValidation ? (
+              <div
+                className={`mt-4 rounded-2xl border px-5 py-4 text-sm ${
+                  computeValidation.valid ? "border-emerald-100 bg-emerald-50/50 text-emerald-700" : "border-rose-100 bg-rose-50/50 text-rose-700"
+                }`}
+              >
+                <div className="font-black">{computeValidation.message}</div>
+                {computeValidation.valid ? (
+                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                    <div>到账算力：{computeValidation.granted_points || 0}</div>
+                    <div>兑换码：{computeValidation.code_mask || "-"}</div>
+                    <div>有效期：{computeValidation.duration_days && computeValidation.duration_days > 0 ? `${computeValidation.duration_days} 天` : "不限制"}</div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {computeMessage ? (
+              <div className="mt-4 rounded-2xl border border-violet-100 bg-white px-4 py-3 text-sm font-bold text-violet-700">
+                {computeMessage}
+              </div>
+            ) : null}
+
+            {latestComputeRedeem ? (
+              <div className="mt-4 rounded-2xl border border-violet-100 bg-white px-5 py-4 text-sm text-slate-700">
+                <div className="font-black text-violet-700">本次算力兑换成功</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <div>兑换码：{latestComputeRedeem.code_mask || "-"}</div>
+                  <div>本次到账：{latestComputeRedeem.granted_points || 0}</div>
+                  <div>当前可用：{latestComputeRedeem.available_points ?? computeAccount?.available_points ?? 0}</div>
+                  <div>生效时间：{formatTime(latestComputeRedeem.starts_at)}</div>
+                  <div className="sm:col-span-2">到期时间：{latestComputeRedeem.expires_at ? formatTime(latestComputeRedeem.expires_at) : "不限制"}</div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-6 overflow-hidden rounded-2xl border border-violet-100 bg-white">
+              <div className="flex items-center justify-between border-b border-violet-50 px-5 py-3 text-sm font-black text-slate-700">
+                <span>我的算力兑换记录</span>
+                {computeRecordsLoading ? <span className="text-xs font-semibold text-slate-400">加载中...</span> : null}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-violet-50/40 text-xs uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="px-5 py-3">兑换码</th>
+                      <th className="px-5 py-3">到账算力</th>
+                      <th className="px-5 py-3">生效时间</th>
+                      <th className="px-5 py-3">到期时间</th>
+                      <th className="px-5 py-3">兑换时间</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-violet-50">
+                    {computeRedeemRecords.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-5 py-3 font-semibold text-slate-700">{item.code_mask || "-"}</td>
+                        <td className="px-5 py-3 font-black text-violet-600">{item.granted_points || 0}</td>
+                        <td className="px-5 py-3">{formatTime(item.granted_starts_at)}</td>
+                        <td className="px-5 py-3">{item.granted_expires_at ? formatTime(item.granted_expires_at) : "不限制"}</td>
+                        <td className="px-5 py-3">{formatTime(item.created_at)}</td>
+                      </tr>
+                    ))}
+                    {computeRedeemRecords.length === 0 && !computeRecordsLoading ? (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
+                          暂无算力兑换记录
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-6 overflow-hidden rounded-2xl border border-violet-100 bg-white">
+              <div className="border-b border-violet-50 px-5 py-3 text-sm font-black text-slate-700">最近算力流水（含任务消耗）</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-violet-50/40 text-xs uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="px-5 py-3">类型</th>
+                      <th className="px-5 py-3">点数变动</th>
+                      <th className="px-5 py-3">真实成本</th>
+                      <th className="px-5 py-3">任务</th>
+                      <th className="px-5 py-3">说明</th>
+                      <th className="px-5 py-3">时间</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-violet-50">
+                    {computeLedgers.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-5 py-3">{getComputeLedgerTypeLabel(item.type)}</td>
+                        <td className={`px-5 py-3 font-black ${Number(item.points || 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                          {Number(item.points || 0) >= 0 ? "+" : ""}
+                          {item.points || 0}
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="font-semibold text-slate-700">
+                            {formatCNYValue(item.metadata?.billable_cost_cny)}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-400">
+                            {String(item.metadata?.billable_cost_source || "").trim() || "-"}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          {item.job_id ? (
+                            <div className="space-y-0.5">
+                              <Link href={`/mine/works/${item.job_id}`} className="font-semibold text-violet-700 hover:text-violet-600">
+                                任务 #{item.job_id}
+                              </Link>
+                              <div className="text-xs text-slate-400">
+                                {pointHoldStatusLabel(String(item.metadata?.hold_status || item.remark || "").trim())}
+                              </div>
+                            </div>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td className="px-5 py-3">{item.remark || "-"}</td>
+                        <td className="px-5 py-3">{formatTime(item.created_at)}</td>
+                      </tr>
+                    ))}
+                    {computeLedgers.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                          暂无算力流水
                         </td>
                       </tr>
                     ) : null}

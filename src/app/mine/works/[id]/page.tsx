@@ -54,6 +54,17 @@ type VideoJobResultCollection = {
   updated_at?: string;
 };
 
+type VideoJobBillingInfo = {
+  actual_cost_cny?: number;
+  currency?: string;
+  pricing_version?: string;
+  charged_points?: number;
+  reserved_points?: number;
+  hold_status?: string;
+  point_per_cny?: number;
+  cost_markup_multiplier?: number;
+};
+
 type VideoJobResultResponse = {
   job_id?: number;
   status?: string;
@@ -65,6 +76,7 @@ type VideoJobResultResponse = {
   package?: VideoJobResultPackage;
   options?: Record<string, unknown>;
   metrics?: Record<string, unknown>;
+  billing?: VideoJobBillingInfo;
 };
 
 type VideoJobSnapshot = {
@@ -73,6 +85,7 @@ type VideoJobSnapshot = {
   stage?: string;
   progress?: number;
   title?: string;
+  billing?: VideoJobBillingInfo;
 };
 
 type ApiErrorPayload = {
@@ -250,6 +263,35 @@ function formatMetric(value?: number, digits = 3) {
   return num.toFixed(digits);
 }
 
+function formatCNY(value?: number) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || num <= 0) return "-";
+  return `¥${num.toFixed(4)}`;
+}
+
+function formatPoints(value?: number) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || num <= 0) return "-";
+  return `${Math.round(num)}`;
+}
+
+function pointHoldStatusLabel(value?: string) {
+  switch ((value || "").trim().toLowerCase()) {
+    case "settled":
+      return "已结算";
+    case "held":
+      return "预冻结";
+    case "released":
+      return "已释放";
+    case "cancelled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    default:
+      return value || "-";
+  }
+}
+
 function normalizeFormat(value?: string) {
   const format = (value || "").trim().toLowerCase();
   if (!format) return "";
@@ -425,6 +467,10 @@ export default function MineWorkDetailPage() {
   const packageError = String(result?.metrics?.package_zip_error || "").trim();
   const packageRetryCount = Number(result?.metrics?.package_zip_retry_count || 0);
   const templateSuggestion = useMemo(() => parseQualityTemplateSuggestion(result), [result]);
+  const billing = useMemo(
+    () => result?.billing || jobSnapshot?.billing || null,
+    [jobSnapshot?.billing, result?.billing]
+  );
   const emptyStateMessage = useMemo(() => {
     const message = (result?.message || "").trim();
     if (message) return message;
@@ -795,6 +841,21 @@ export default function MineWorkDetailPage() {
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
                 创建 {formatTime(result?.collection?.created_at)}
               </span>
+              {billing ? (
+                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                  真实成本 {formatCNY(billing.actual_cost_cny)}
+                </span>
+              ) : null}
+              {billing ? (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                  扣点 {formatPoints(billing.charged_points)}（预冻结 {formatPoints(billing.reserved_points)}）
+                </span>
+              ) : null}
+              {billing ? (
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+                  结算 {pointHoldStatusLabel(billing.hold_status)}
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">

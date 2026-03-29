@@ -102,7 +102,11 @@ export function useJobStream({
       const runFallbackPoll = () => {
         const fn = onFallbackPollRef.current;
         if (typeof fn === "function") {
-          void Promise.resolve(fn());
+          void Promise.resolve(fn()).catch((err: unknown) => {
+            if (stopped) return;
+            const msg = err instanceof Error ? err.message : "fallback poll failed";
+            setLastError(msg);
+          });
         }
       };
       runFallbackPoll();
@@ -239,4 +243,3 @@ export function useJobStream({
     lastError,
   };
 }
-
