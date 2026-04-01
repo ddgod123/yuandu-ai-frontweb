@@ -1,38 +1,65 @@
 # Yuandu AI Frontweb
 
-[中文](#中文简介) | [English](#english)
+> User-facing Visual Asset Portal & AI Creation Workspace
+
+## 1) 定位（Positioning）
+
+本仓库是元都AI用户端前台，承接平台的内容消费与创作转化：
+
+- 视觉资产浏览：合集、单图、专题推荐
+- AI 创作工作台：视频转图片任务发起与结果管理
+- 个人资产中心：收藏、作品、下载、权益
 
 ---
 
-## 中文简介
+## 2) 平台连接关系（Platform Topology）
 
-元都AI（Yuandu AI）用户端应用。  
-定位为「**视觉资产入口 + AI 创作工作台**」，用于浏览、创作、管理与下载视觉资产。
-
-### 核心能力
-
-- 视觉资产浏览（合集、单图、专题）
-- 视频转视觉资产任务创建与结果管理
-- 我的收藏 / 我的作品 / 下载管理
-- 订阅、算力、次卡等权益页面
-
----
-
-## English
-
-User-facing web application for Yuandu AI.  
-It serves as the **visual asset entry + AI creation workspace** for browsing, generating, organizing, and downloading assets.
-
-### Core Capabilities
-
-- Visual asset discovery (collections, single assets, themes)
-- Video-to-asset task creation and result management
-- Favorites, personal works, and download management
-- Subscription, compute credits, and card-based entitlements
+```mermaid
+flowchart LR
+    User[User Browser] --> FW[Frontweb<br/>Next.js App]
+    FW --> API[Backend API]
+    API --> DB[(PostgreSQL)]
+    API --> MQ[(Redis / Asynq)]
+    MQ --> WK[Workers]
+    WK --> OSS[(Qiniu Storage)]
+    FW --> OSS
+```
 
 ---
 
-## Tech Stack
+## 3) 前端模块关系图（Frontend Modules）
+
+```mermaid
+flowchart TD
+    AppRouter[App Router] --> PageHome[Home / Explore]
+    AppRouter --> PageCreate[Create Workspace]
+    AppRouter --> PageMine[Mine / Works / Favorites]
+    AppRouter --> PageProfile[Subscription / Compute / Cards]
+
+    PageCreate --> Workbench[Task Explorer + Visual Canvas + AI Console]
+    PageMine --> Downloads[Download & Collection Management]
+
+    PageHome --> APIClient[API Client]
+    Workbench --> APIClient
+    Downloads --> APIClient
+    PageProfile --> APIClient
+
+    APIClient --> Backend[Yuandu AI Backend]
+```
+
+---
+
+## 4) 路线图目录（Roadmap）
+
+| 阶段 | 方向 | 状态 |
+|---|---|---|
+| Phase 1 | 用户消费链路（浏览/收藏/下载）稳定化 | ✅ In Progress |
+| Phase 2 | 创作工作台增强（任务可视化、结果筛选、效率优化） | 🚧 In Progress |
+| Phase 3 | 创作者协作能力（模板化、批量化、团队化） | 🗓️ Planned |
+
+---
+
+## 5) Tech Stack
 
 - Next.js 16
 - React 19
@@ -41,7 +68,7 @@ It serves as the **visual asset entry + AI creation workspace** for browsing, ge
 
 ---
 
-## Quick Start
+## 6) Quick Start
 
 ```bash
 npm install
@@ -53,18 +80,18 @@ Default: `http://localhost:5918`
 
 ---
 
-## Environment
+## 7) Environment
 
 ```bash
 NEXT_PUBLIC_API_BASE=/api
 ```
 
 - Local direct backend: `http://localhost:5050/api`
-- Production: recommended via Nginx reverse proxy on `/api`
+- Production: recommend Nginx reverse proxy on `/api`
 
 ---
 
-## Build & Run
+## 8) Build & Run
 
 ```bash
 npm run build
@@ -73,12 +100,12 @@ npm run start
 
 ---
 
-## Deployment
+## 9) Deployment
 
 See: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
 
 ---
 
-## License
+## 10) License
 
 See `LICENSE`.
