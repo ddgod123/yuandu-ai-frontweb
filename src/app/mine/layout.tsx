@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import MineMenu from "@/components/mine/MineMenu";
 import {
   AUTH_CHANGE_EVENT,
-  clearAuthSession,
   ensureAuthSession,
-  hasStoredAuthState,
 } from "@/lib/auth-client";
 
 export default function MineLayout({ children }: { children: React.ReactNode }) {
@@ -50,9 +48,6 @@ export default function MineLayout({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (!authChecked) return;
     if (!isAuthorized) {
-      if (hasStoredAuthState()) {
-        clearAuthSession();
-      }
       router.replace(`/login?next=${encodeURIComponent("/mine")}`);
     }
   }, [authChecked, isAuthorized, router]);

@@ -253,8 +253,12 @@ export async function fetchWithAuthRetry(input: RequestInfo | URL, init: Request
   if (outcome !== "ok") {
     if (outcome === "invalid") {
       clearAuthSession();
+      return res;
     }
-    return res;
+    return new Response(JSON.stringify({ error: "auth_refresh_transient" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   return fetchWithAuth(input, init);

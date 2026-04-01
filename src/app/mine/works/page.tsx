@@ -5,13 +5,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
-import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
 
 import {
   RefreshCw,
-  Plus,
   Trash2,
-  Download,
   CheckSquare,
   Square,
   Clock,
@@ -19,6 +16,7 @@ import {
   HardDrive,
   Package,
   ChevronDown,
+  Layers3,
 } from "lucide-react";
 
 type VideoJobItem = {
@@ -37,6 +35,11 @@ type VideoJobItem = {
 
 type VideoJobListResponse = {
   items?: VideoJobItem[];
+  page?: number;
+  limit?: number;
+  total?: number;
+  total_pages?: number;
+  has_more?: boolean;
 };
 
 type VideoJobResultSummary = {
@@ -83,6 +86,7 @@ type WorkCard = {
 };
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
+const PAGE_SIZE = 12;
 
 function isImageFile(url?: string | null) {
   if (!url) return false;
@@ -125,9 +129,6 @@ function buildImageCandidates(rawUrl: string): string[] {
     if (!candidates.includes(value)) candidates.push(value);
   };
 
-  // 开发阶段默认优先走后端 storage proxy，避免依赖未备案/冻结域名。
-  add(proxyCandidate);
-
   // 避免 SSR/CSR 首帧因 window 协议差异导致 hydration mismatch。
   const preferHttps = true;
 
@@ -141,6 +142,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    // 直链失败再走 proxy 兜底，可减少后端 proxy 压力与首屏等待。
     add(proxyCandidate);
     return candidates;
   }
@@ -155,6 +157,7 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(httpURL);
       add(httpsURL);
     }
+    // 直链失败再走 proxy 兜底，可减少后端 proxy 压力与首屏等待。
     add(proxyCandidate);
     return candidates;
   }
@@ -174,6 +177,13 @@ function buildImageCandidates(rawUrl: string): string[] {
       add(`http://${trimmed}`);
       add(`https://${trimmed}`);
     }
+    // 直链失败再走 proxy 兜底，可减少后端 proxy 压力与首屏等待。
+    add(proxyCandidate);
+    return candidates;
+  }
+
+  if (trimmed.startsWith("emoji/")) {
+    // 纯对象 key 必须走 proxy。
     add(proxyCandidate);
     return candidates;
   }
@@ -271,12 +281,6 @@ function formatBytes(value?: number) {
   return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function formatCNY(value?: number) {
-  const n = Number(value || 0);
-  if (!Number.isFinite(n) || n <= 0) return "-";
-  return `¥${n.toFixed(4)}`;
-}
-
 function formatBadgeLabel(raw: string) {
   const value = (raw || "").trim().toLowerCase();
   if (!value) return "未标注";
@@ -290,16 +294,6 @@ function packageStatusText(status: "ready" | "processing" | "failed") {
   return "ZIP 处理中";
 }
 
-function holdStatusText(raw?: string) {
-  const value = String(raw || "").trim().toLowerCase();
-  if (value === "settled") return "已结算";
-  if (value === "held") return "预冻结";
-  if (value === "released") return "已释放";
-  if (value === "cancelled") return "已取消";
-  if (value === "failed") return "失败";
-  return "-";
-}
-
 async function parseApiErrorMessage(response: Response, fallback: string) {
   const text = (await response.text()).trim();
   if (!text) return fallback;
@@ -311,30 +305,49 @@ async function parseApiErrorMessage(response: Response, fallback: string) {
   }
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function PreviewGrid({ images }: { images: string[] }) {
+function PreviewGrid({ images, fileCount }: { images: string[]; fileCount: number }) {
   const hero = images[0] || "";
   const thumbs = images.slice(1, 4);
   while (thumbs.length < 3) {
     thumbs.push("");
   }
+  const total = Math.max(fileCount || 0, images.length);
 
   return (
-    <div className="flex flex-col gap-1.5 p-2 bg-slate-50/50">
-      <div className="relative aspect-[16/10] w-full overflow-hidden rounded-xl bg-slate-100 ring-1 ring-inset ring-slate-900/5">
-        {hero ? <FallbackImage url={hero} alt="preview-hero" /> : null}
-      </div>
-      <div className="grid grid-cols-3 gap-1.5">
-        {thumbs.map((url, idx) => (
-          <div key={`${url}-${idx}`} className="relative aspect-square w-full overflow-hidden rounded-lg bg-slate-100 ring-1 ring-inset ring-slate-900/5">
-            {url ? <FallbackImage url={url} alt={`preview-thumb-${idx}`} /> : null}
+    <div className="flex flex-col gap-1">
+      <div className="group/hero relative aspect-[16/10] w-full overflow-hidden bg-slate-100">
+        {hero ? <FallbackImage url={hero} alt="preview-hero" /> : (
+          <div className="flex h-full w-full items-center justify-center">
+            <ImageIcon className="h-8 w-8 text-slate-300" />
           </div>
-        ))}
+        )}
+        <div className="absolute bottom-2 right-2 flex items-center gap-1.5 rounded-lg bg-black/50 px-2 py-1 text-[10px] font-bold tracking-wider text-white backdrop-blur-md transition-opacity group-hover/hero:bg-black/70">
+          <Layers3 className="h-3 w-3" />
+          {total} 张
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        {thumbs.map((url, idx) => {
+          const isLast = idx === 2;
+          return (
+            <div key={`${url}-${idx}`} className="group/thumb relative aspect-[16/11] w-full overflow-hidden bg-slate-50">
+              {url ? (
+                <>
+                  <FallbackImage url={url} alt={`preview-thumb-${idx}`} />
+                  {isLast && total > 4 && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-colors group-hover/thumb:bg-black/50">
+                      <span className="text-sm font-black text-white">+{total - 4}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <ImageIcon className="h-4 w-4 text-slate-200/70" />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -369,10 +382,14 @@ export default function MineWorksPage() {
   const [error, setError] = useState<string | null>(null);
   const [cards, setCards] = useState<WorkCard[]>([]);
   const [formatFilter, setFormatFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("time_desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedJobIDs, setSelectedJobIDs] = useState<number[]>([]);
   const [batchHint, setBatchHint] = useState<string | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
-  const [batchDownloading, setBatchDownloading] = useState(false);
 
   const loadWorks = useCallback(async () => {
     setLoading(true);
@@ -380,13 +397,17 @@ export default function MineWorksPage() {
     setBatchHint(null);
     try {
       const myWorksParams = new URLSearchParams();
-      myWorksParams.set("limit", "80");
+      myWorksParams.set("page", String(currentPage));
+      myWorksParams.set("limit", String(PAGE_SIZE));
       if ((formatFilter || "").trim() && formatFilter !== "all") {
         myWorksParams.set("format", formatFilter);
       }
       let jobsRes = await fetchWithAuthRetry(`${API_BASE}/my/works?${myWorksParams.toString()}`);
+      let useLegacyEndpoint = false;
       if (jobsRes.status === 404 || jobsRes.status === 405) {
-        jobsRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs?limit=80&include_result_summary=1&status=done`);
+        useLegacyEndpoint = true;
+        const fallbackLimit = Math.min(100, Math.max(PAGE_SIZE, PAGE_SIZE * currentPage));
+        jobsRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs?limit=${fallbackLimit}&include_result_summary=1&status=done`);
       }
       if (jobsRes.status === 401) {
         clearAuthSession();
@@ -398,7 +419,8 @@ export default function MineWorksPage() {
       }
 
       const payload = (await jobsRes.json()) as VideoJobListResponse;
-      const doneJobs = (Array.isArray(payload.items) ? payload.items : [])
+      const sourceJobs = Array.isArray(payload.items) ? payload.items : [];
+      const doneJobs = sourceJobs
         .filter((item) => {
           if (item.status !== "done") return false;
           const fileCount = Number(item.result_summary?.file_count || 0);
@@ -410,19 +432,48 @@ export default function MineWorksPage() {
 
       if (!doneJobs.length) {
         setCards([]);
+        setTotalItems(0);
+        setTotalPages(1);
         return;
       }
 
-      const nextCards = doneJobs.map((job) => buildWorkCard(job));
-      setCards(nextCards);
+      const allCards = doneJobs.map((job) => buildWorkCard(job));
+
+      if (useLegacyEndpoint) {
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const pageCards = allCards.slice(start, start + PAGE_SIZE);
+        const nextTotalPages = Math.max(1, Math.ceil(allCards.length / PAGE_SIZE));
+        if (currentPage > nextTotalPages) {
+          setCurrentPage(nextTotalPages);
+        }
+        setCards(pageCards);
+        setTotalItems(allCards.length);
+        setTotalPages(nextTotalPages);
+        return;
+      }
+
+      const apiTotal = Math.max(0, Number(payload.total || 0));
+      const apiLimit = Math.max(1, Number(payload.limit || PAGE_SIZE));
+      const apiTotalPages = Math.max(1, Number(payload.total_pages || Math.ceil(apiTotal / apiLimit) || 1));
+      const apiPage = Math.max(1, Number(payload.page || currentPage));
+
+      if (apiPage !== currentPage) {
+        setCurrentPage(apiPage);
+      }
+
+      setCards(allCards);
+      setTotalItems(apiTotal > 0 ? apiTotal : allCards.length);
+      setTotalPages(apiTotalPages);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "加载作品失败";
       setError(message);
       setCards([]);
+      setTotalItems(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
-  }, [formatFilter, router]);
+  }, [currentPage, formatFilter, router]);
 
   useEffect(() => {
     void loadWorks();
@@ -433,24 +484,36 @@ export default function MineWorksPage() {
     setSelectedJobIDs((prev) => prev.filter((id) => exists.has(id)));
   }, [cards]);
 
-  const total = useMemo(() => cards.length, [cards.length]);
+  const getCardTotalBytes = useCallback((item: WorkCard) => {
+    const outputBytes = Math.max(0, Number(item.outputTotalSizeBytes || 0));
+    const packageBytes = Math.max(0, Number(item.packageSizeBytes || 0));
+    return outputBytes > 0 ? outputBytes : packageBytes;
+  }, []);
+
+  const sortedCards = useMemo(() => {
+    const next = [...cards];
+    next.sort((a, b) => {
+      if (sortBy === "size_asc") return getCardTotalBytes(a) - getCardTotalBytes(b);
+      if (sortBy === "size_desc") return getCardTotalBytes(b) - getCardTotalBytes(a);
+      if (sortBy === "files_asc") return Math.max(0, a.fileCount || 0) - Math.max(0, b.fileCount || 0);
+      if (sortBy === "files_desc") return Math.max(0, b.fileCount || 0) - Math.max(0, a.fileCount || 0);
+      if (sortBy === "time_asc") return parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt);
+      return parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt);
+    });
+    return next;
+  }, [cards, getCardTotalBytes, sortBy]);
+
+  const visibleTotal = useMemo(() => sortedCards.length, [sortedCards.length]);
   const selectedCount = selectedJobIDs.length;
-  const allSelected = total > 0 && selectedCount === total;
   const selectedCards = useMemo(() => {
     if (!selectedJobIDs.length) return [];
     const selectedSet = new Set(selectedJobIDs);
-    return cards.filter((card) => selectedSet.has(card.jobID));
-  }, [cards, selectedJobIDs]);
-  const totalFiles = useMemo(() => cards.reduce((acc, item) => acc + Math.max(0, item.fileCount || 0), 0), [cards]);
-  const totalSizeBytes = useMemo(
-    () =>
-      cards.reduce((acc, item) => {
-        const outputBytes = Math.max(0, Number(item.outputTotalSizeBytes || 0));
-        const packageBytes = Math.max(0, Number(item.packageSizeBytes || 0));
-        return acc + (outputBytes > 0 ? outputBytes : packageBytes);
-      }, 0),
-    [cards]
-  );
+    return sortedCards.filter((card) => selectedSet.has(card.jobID));
+  }, [sortedCards, selectedJobIDs]);
+  const totalFiles = useMemo(() => sortedCards.reduce((acc, item) => acc + Math.max(0, item.fileCount || 0), 0), [sortedCards]);
+  const totalSizeBytes = useMemo(() => sortedCards.reduce((acc, item) => acc + getCardTotalBytes(item), 0), [getCardTotalBytes, sortedCards]);
+  const canGoPrevPage = currentPage > 1;
+  const canGoNextPage = currentPage < totalPages;
 
   const toggleJobSelection = useCallback((jobID: number) => {
     setSelectedJobIDs((prev) => {
@@ -461,38 +524,14 @@ export default function MineWorksPage() {
     });
   }, []);
 
-  const toggleSelectAll = useCallback(() => {
-    setSelectedJobIDs((prev) => {
-      if (cards.length === 0) return [];
-      if (prev.length === cards.length) return [];
-      return cards.map((item) => item.jobID);
-    });
-  }, [cards]);
-
-  const handleBatchDownload = useCallback(async () => {
-    if (!selectedCards.length || batchDownloading) return;
-    setBatchHint(null);
-    setBatchDownloading(true);
-    let successCount = 0;
-    const failed: string[] = [];
-    for (const card of selectedCards) {
-      const endpoint = `${API_BASE}/video-jobs/${card.jobID}/download-zip`;
-      const result = await requestDownloadLink(endpoint);
-      if (!result.ok) {
-        failed.push(`#${card.jobID}`);
-        continue;
+  const toggleSelectionMode = useCallback(() => {
+    setSelectionMode((prev) => {
+      if (prev) {
+        setSelectedJobIDs([]);
       }
-      triggerURLDownload(result.data.url, result.data.name || `${card.title || `job-${card.jobID}`}.zip`);
-      successCount += 1;
-      await sleep(220);
-    }
-    if (failed.length) {
-      setBatchHint(`批量下载完成：成功 ${successCount}，失败 ${failed.length}（${failed.slice(0, 5).join("、")}）`);
-    } else {
-      setBatchHint(`批量下载已触发，共 ${successCount} 个合集。`);
-    }
-    setBatchDownloading(false);
-  }, [batchDownloading, selectedCards]);
+      return !prev;
+    });
+  }, []);
 
   const handleBatchDelete = useCallback(async () => {
     if (!selectedCards.length || batchDeleting) return;
@@ -539,92 +578,106 @@ export default function MineWorksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 mb-2 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-4 mb-6 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900">我的作品</h1>
-          <p className="mt-1 text-sm text-slate-500">按合集展示视频转图片结果，支持预览、下载 ZIP 与批量管理。</p>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100/50 text-emerald-600">
+              <ImageIcon className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900">我的作品</h1>
+              <p className="mt-1 text-sm font-medium text-slate-500">按合集展示视频转图片结果，支持预览、下载与管理。</p>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => void loadWorks()}
-            className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50 transition-all"
-          >
-            <RefreshCw className={`h-4 w-4 text-slate-500 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "刷新中" : "刷新"}
-          </button>
-          <Link href="/create" className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 transition-all">
-            <Plus className="h-4 w-4" /> 去创作
-          </Link>
-        </div>
+        <button
+          onClick={() => void loadWorks()}
+          className="flex w-fit items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 hover:bg-slate-50 hover:text-emerald-600 transition-all active:scale-95"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin text-emerald-500" : ""}`} />
+          {loading ? "刷新中" : "刷新列表"}
+        </button>
       </div>
 
-      <div className="flex flex-col gap-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-inset ring-slate-100 md:flex-row md:items-center md:justify-between">
-        <div className="flex divide-x divide-slate-100 text-sm">
-          <div className="px-4 first:pl-2">
-            <span className="text-slate-500">合集</span>
-            <span className="ml-2 font-bold text-slate-900">{total}</span>
+      <div className="flex flex-col gap-4 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-inset ring-slate-200/60 md:flex-row md:items-center md:justify-between">
+        <div className="flex divide-x divide-slate-200/60 text-sm">
+          <div className="px-5 first:pl-3 flex flex-col justify-center">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">合集总数</span>
+            <span className="text-base font-black text-slate-800">{totalItems}</span>
           </div>
-          <div className="px-4">
-            <span className="text-slate-500">文件</span>
-            <span className="ml-2 font-bold text-slate-900">{totalFiles}</span>
+          <div className="px-5 flex flex-col justify-center">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">文件总数</span>
+            <span className="text-base font-black text-slate-800">{totalFiles}</span>
           </div>
-          <div className="px-4 pr-2">
-            <span className="text-slate-500">容量</span>
-            <span className="ml-2 font-bold text-slate-900">{formatBytes(totalSizeBytes)}</span>
+          <div className="px-5 pr-3 flex flex-col justify-center">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">占用容量</span>
+            <span className="text-base font-black text-slate-800">{formatBytes(totalSizeBytes)}</span>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="relative">
             <select
               value={formatFilter}
-              onChange={(event) => setFormatFilter(event.target.value)}
-              className="appearance-none rounded-lg bg-slate-50 pl-3 pr-8 py-1.5 text-sm font-medium text-slate-700 outline-none ring-1 ring-inset ring-slate-200 focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+              onChange={(event) => {
+                setFormatFilter(event.target.value);
+                setCurrentPage(1);
+                setSelectedJobIDs([]);
+              }}
+              className="appearance-none rounded-xl bg-slate-50/80 pl-4 pr-10 py-2 text-sm font-semibold text-slate-700 outline-none ring-1 ring-inset ring-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all"
             >
               <option value="all">全部格式</option>
               <option value="gif">GIF</option>
               <option value="png">PNG</option>
-              <option value="jpg">JPG</option>
-              <option value="webp">WEBP</option>
-              <option value="live">LIVE</option>
-              <option value="mp4">MP4</option>
+              <option value="jpg" disabled>JPG（待开发）</option>
+              <option value="webp" disabled>WEBP（待开发）</option>
+              <option value="live" disabled>LIVE（待开发）</option>
+              <option value="mp4" disabled>MP4（待开发）</option>
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           </div>
 
-          <div className="mx-1 h-4 w-px bg-slate-200" />
+          <div className="relative">
+            <select
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value)}
+              className="appearance-none rounded-xl bg-slate-50/80 pl-4 pr-10 py-2 text-sm font-semibold text-slate-700 outline-none ring-1 ring-inset ring-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all"
+            >
+              <option value="time_desc">时间（最新优先）</option>
+              <option value="time_asc">时间（最早优先）</option>
+              <option value="size_asc">容量：从小到大</option>
+              <option value="size_desc">容量：从大到小</option>
+              <option value="files_asc">文件数：从小到大</option>
+              <option value="files_desc">文件数：从大到小</option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
 
           <button
             type="button"
-            onClick={toggleSelectAll}
-            disabled={total === 0}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={toggleSelectionMode}
+            disabled={visibleTotal === 0}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+              selectionMode ? "bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200" : "bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50"
+            }`}
           >
-            {allSelected ? <CheckSquare className="h-4 w-4 text-emerald-500" /> : <Square className="h-4 w-4 text-slate-400" />}
-            全选
+            {selectionMode ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4 text-slate-400" />}
+            {selectionMode ? "退出批量" : "批量操作"}
           </button>
 
-          {selectedCount > 0 && (
+          {selectionMode ? (
             <>
-              <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-sm font-medium text-emerald-600">已选 {selectedCount}</span>
-              <button
-                type="button"
-                onClick={() => void handleBatchDownload()}
-                disabled={batchDownloading || batchDeleting}
-                className="flex items-center gap-1.5 rounded-lg bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download className="h-4 w-4" /> {batchDownloading ? "下载中" : "批量下载"}
-              </button>
+              <span className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-600 ring-1 ring-inset ring-emerald-100">已选 {selectedCount}</span>
               <button
                 type="button"
                 onClick={() => void handleBatchDelete()}
-                disabled={batchDeleting || batchDownloading}
-                className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={batchDeleting || selectedCount === 0}
+                className="flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-rose-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
               >
                 <Trash2 className="h-4 w-4" /> {batchDeleting ? "删除中" : "批量删除"}
               </button>
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -638,16 +691,20 @@ export default function MineWorksPage() {
       {loading && cards.length === 0 ? (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }).map((_, idx) => (
-            <div key={`skeleton-${idx}`} className="animate-pulse flex flex-col rounded-2xl border border-slate-100 bg-white p-2 shadow-sm">
-              <div className="aspect-[16/10] w-full rounded-xl bg-slate-100" />
-              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                <div className="aspect-square rounded-lg bg-slate-100" />
-                <div className="aspect-square rounded-lg bg-slate-100" />
-                <div className="aspect-square rounded-lg bg-slate-100" />
+            <div key={`skeleton-${idx}`} className="animate-pulse flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              <div className="flex flex-col gap-1">
+                <div className="aspect-[16/10] w-full bg-slate-100" />
+                <div className="grid grid-cols-3 gap-1">
+                  <div className="aspect-[16/11] bg-slate-100" />
+                  <div className="aspect-[16/11] bg-slate-100" />
+                  <div className="aspect-[16/11] bg-slate-100" />
+                </div>
               </div>
-              <div className="p-2 mt-2 space-y-3">
-                <div className="h-5 w-2/3 rounded bg-slate-100" />
-                <div className="grid grid-cols-2 gap-2">
+              <div className="px-5 pb-5 pt-4 space-y-4">
+                <div className="h-5 w-2/3 rounded-md bg-slate-100" />
+                <div className="grid grid-cols-2 gap-3">
+                   <div className="h-4 w-full rounded bg-slate-100" />
+                   <div className="h-4 w-full rounded bg-slate-100" />
                    <div className="h-4 w-full rounded bg-slate-100" />
                    <div className="h-4 w-full rounded bg-slate-100" />
                 </div>
@@ -668,75 +725,76 @@ export default function MineWorksPage() {
         </div>
       ) : null}
 
-      {cards.length > 0 ? (
+      {sortedCards.length > 0 ? (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {cards.map((item) => {
+          {sortedCards.map((item) => {
             const selected = selectedJobIDs.includes(item.jobID);
             const mainFormat = formatBadgeLabel(item.requestedFormat || "");
-            const totalBytes = item.outputTotalSizeBytes > 0 ? item.outputTotalSizeBytes : item.packageSizeBytes;
+            const totalBytes = getCardTotalBytes(item);
             return (
               <Link
                 key={item.jobID}
                 href={`/mine/works/${item.jobID}`}
-                className={`group relative flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-inset transition-all hover:-translate-y-1 hover:shadow-md ${
-                  selected ? "ring-2 ring-emerald-500" : "ring-slate-200"
+                className={`group relative flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-inset transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-900/5 ${
+                  selectionMode && selected ? "ring-2 ring-emerald-500" : "ring-slate-200/60 hover:ring-emerald-200"
                 }`}
+                onClick={(event) => {
+                  if (!selectionMode) return;
+                  event.preventDefault();
+                  toggleJobSelection(item.jobID);
+                }}
               >
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    toggleJobSelection(item.jobID);
-                  }}
-                  className={`absolute right-3 top-3 z-10 rounded-full p-1 transition-all ${
-                    selected
-                      ? "bg-emerald-500 text-white shadow-sm"
-                      : "bg-white/80 text-slate-400 backdrop-blur hover:bg-white hover:text-slate-600 shadow-sm ring-1 ring-inset ring-slate-200/50 opacity-0 group-hover:opacity-100"
-                  }`}
-                >
-                  {selected ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
-                </button>
+                {selectionMode ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleJobSelection(item.jobID);
+                    }}
+                    className={`absolute right-4 top-4 z-10 rounded-full p-1.5 transition-all ${
+                      selected
+                        ? "bg-emerald-500 text-white shadow-sm"
+                        : "bg-white/90 text-slate-400 backdrop-blur hover:bg-white hover:text-slate-600 shadow-sm ring-1 ring-inset ring-slate-200/50"
+                    }`}
+                  >
+                    {selected ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
+                  </button>
+                ) : null}
 
-                <PreviewGrid images={item.previewImages} />
+                <PreviewGrid images={item.previewImages} fileCount={item.fileCount} />
 
-                <div className="flex flex-1 flex-col p-4 pt-3">
+                <div className="flex flex-1 flex-col px-4 pb-4 pt-3">
                   <div className="flex items-start justify-between gap-3">
-                    <h3 className="line-clamp-1 text-base font-bold text-slate-900 group-hover:text-emerald-600 transition-colors" title={item.title}>{item.title}</h3>
-                    <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold tracking-wider text-slate-600 uppercase">
+                    <h3 className="line-clamp-1 text-base font-bold text-slate-800 group-hover:text-emerald-600 transition-colors" title={item.title}>{item.title}</h3>
+                    <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-black tracking-wider text-slate-600 uppercase">
                       {mainFormat}
                     </span>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-y-2.5 gap-x-2 text-xs text-slate-600">
-                    <div className="flex items-center gap-1.5" title="生成时间">
+                  <div className="mt-3 grid grid-cols-2 gap-y-3 gap-x-3 text-xs font-medium text-slate-500 bg-slate-50/50 p-2.5 rounded-xl">
+                    <div className="flex items-center gap-2" title="生成时间">
                       <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       <span className="truncate">{formatTime(item.createdAt).split(" ")[0]}</span>
                     </div>
-                    <div className="flex items-center gap-1.5" title="文件数量">
+                    <div className="flex items-center gap-2" title="文件数量">
                       <ImageIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       <span className="truncate">{item.fileCount} 个</span>
                     </div>
-                    <div className="flex items-center gap-1.5" title="文件总大小">
+                    <div className="flex items-center gap-2" title="文件总大小">
                       <HardDrive className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       <span className="truncate">{formatBytes(totalBytes)}</span>
                     </div>
-                    <div className="flex items-center gap-1.5" title="ZIP 状态">
+                    <div className="flex items-center gap-2" title="ZIP 状态">
                       <Package className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                       <span className="truncate">{packageStatusText(item.packageStatus)}</span>
                     </div>
                   </div>
 
-                  {item.actualCostCNY > 0 || item.chargedPoints > 0 || item.holdStatus ? (
-                    <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-2.5 py-2 text-[11px] text-indigo-700">
-                      成本 {formatCNY(item.actualCostCNY)} · 扣点 {item.chargedPoints > 0 ? item.chargedPoints : 0} · {holdStatusText(item.holdStatus)}
-                    </div>
-                  ) : null}
-
                   {item.formatSummary.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1.5 pt-3 border-t border-slate-100">
+                    <div className="mt-3 flex flex-wrap gap-1.5 pt-1">
                       {item.formatSummary.slice(0, 3).map((line) => (
-                        <span key={line} className="rounded-md bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-500 border border-slate-100">
+                        <span key={line} className="rounded-md bg-emerald-50/50 px-2 py-1 text-[10px] font-semibold text-emerald-600 border border-emerald-100/50">
                           {line}
                         </span>
                       ))}
@@ -746,6 +804,36 @@ export default function MineWorksPage() {
               </Link>
             );
           })}
+        </div>
+      ) : null}
+
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200/70 bg-white px-4 py-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (!canGoPrevPage) return;
+              setCurrentPage((prev) => Math.max(1, prev - 1));
+            }}
+            disabled={!canGoPrevPage || loading}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            上一页
+          </button>
+          <span className="text-sm font-semibold text-slate-600">
+            第 {currentPage} / {totalPages} 页 · 共 {totalItems} 个合集
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (!canGoNextPage) return;
+              setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+            }}
+            disabled={!canGoNextPage || loading}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            下一页
+          </button>
         </div>
       ) : null}
     </div>

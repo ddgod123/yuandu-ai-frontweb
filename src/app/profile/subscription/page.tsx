@@ -2,20 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 import {
-  Crown, 
-  Ticket, 
-  CheckCircle2, 
-  History, 
-  Zap, 
-  ShieldCheck, 
-  Info,
-  Calendar,
   AlertCircle,
-  Users
+  Calendar,
+  CheckCircle2,
+  Crown,
+  History,
+  Info,
+  ShieldCheck,
+  Ticket,
+  Users,
+  Zap,
 } from "lucide-react";
 
 type Profile = {
@@ -25,7 +24,6 @@ type Profile = {
   user_level?: string;
   subscription_status?: string;
   subscription_plan?: string;
-  subscription_started_at?: string;
   subscription_expires_at?: string;
   is_subscriber?: boolean;
 };
@@ -34,8 +32,6 @@ type RedeemRecord = {
   id: number;
   code_mask?: string;
   granted_plan?: string;
-  granted_status?: string;
-  granted_starts_at?: string;
   granted_expires_at?: string;
   created_at?: string;
 };
@@ -47,64 +43,21 @@ type RedeemRecordResponse = {
 type RedeemValidateResponse = {
   valid: boolean;
   message: string;
-  code_mask?: string;
   plan?: string;
   duration_days?: number;
   starts_at?: string;
   expires_at?: string;
-  status?: string;
 };
 
 type RedeemSubmitResponse = {
   error?: string;
   message?: string;
   user?: Profile;
+  code_mask?: string;
   plan?: string;
-  starts_at?: string;
-  expires_at?: string;
   duration_days?: number;
-  code_mask?: string;
-};
-
-type CollectionCodeValidateResponse = {
-  valid: boolean;
-  message: string;
-  code_mask?: string;
-  status?: string;
-  collection_id?: number;
-  collection_title?: string;
-  granted_download_times?: number;
-  max_redeem_users?: number;
-  used_redeem_users?: number;
   starts_at?: string;
-  ends_at?: string;
-};
-
-type CollectionCodeRedeemResponse = {
-  error?: string;
-  message?: string;
-  code_mask?: string;
-  collection_id?: number;
-  collection_title?: string;
-  granted_download_times?: number;
-  remaining_download_times?: number;
   expires_at?: string;
-};
-
-type CollectionDownloadEntitlement = {
-  id: number;
-  collection_id: number;
-  collection_title?: string;
-  granted_download_times?: number;
-  used_download_times?: number;
-  remaining_download_times?: number;
-  status?: string;
-  expires_at?: string;
-  last_consumed_at?: string;
-};
-
-type CollectionDownloadEntitlementResponse = {
-  items?: CollectionDownloadEntitlement[];
 };
 
 type LatestRedeemCard = {
@@ -115,87 +68,14 @@ type LatestRedeemCard = {
   expires_at?: string;
 };
 
-type LatestCollectionRedeemCard = {
-  code_mask?: string;
-  collection_title?: string;
-  granted_download_times?: number;
-  remaining_download_times?: number;
-  expires_at?: string;
-};
-
-type ComputeAccountSnapshot = {
-  user_id?: number;
-  available_points?: number;
-  frozen_points?: number;
-  debt_points?: number;
-  total_consumed_points?: number;
-  total_recharged_points?: number;
-  point_per_cny?: number;
-  cost_markup_multiplier?: number;
-};
-
-type ComputeLedgerItem = {
-  id: number;
-  job_id?: number;
-  type?: string;
-  points?: number;
-  remark?: string;
-  metadata?: Record<string, unknown>;
-  created_at?: string;
-};
-
-type ComputeAccountSummaryResponse = {
-  account?: ComputeAccountSnapshot;
-  ledgers?: ComputeLedgerItem[];
-};
-
-type ComputeRedeemValidateResponse = {
-  valid: boolean;
-  message: string;
-  code_mask?: string;
-  granted_points?: number;
-  duration_days?: number;
-  starts_at?: string;
-  expires_at?: string;
-  status?: string;
-};
-
-type ComputeRedeemSubmitResponse = {
-  error?: string;
-  message?: string;
-  code_mask?: string;
-  granted_points?: number;
-  duration_days?: number;
-  starts_at?: string;
-  expires_at?: string;
-  used_count?: number;
-  max_uses?: number;
-  account?: ComputeAccountSnapshot;
-};
-
-type ComputeRedeemRecord = {
-  id: number;
-  code_mask?: string;
-  granted_points?: number;
-  granted_starts_at?: string;
-  granted_expires_at?: string;
-  created_at?: string;
-};
-
-type ComputeRedeemRecordResponse = {
-  items?: ComputeRedeemRecord[];
-};
-
-type LatestComputeRedeemCard = {
-  code_mask?: string;
-  granted_points?: number;
-  duration_days?: number;
-  starts_at?: string;
-  expires_at?: string;
-  available_points?: number;
+type StatusMeta = {
+  label: string;
+  dotClassName: string;
+  badgeClassName: string;
 };
 
 const DEFAULT_AVATAR = "https://api.dicebear.com/7.x/adventurer/svg?seed=emoji";
+
 const USER_LEVEL_LABELS: Record<string, string> = {
   free: "基础用户",
   subscriber: "订阅会员",
@@ -216,12 +96,6 @@ const PLAN_LABELS: Record<string, string> = {
   yearly: "年度会员",
   annual: "年度会员",
   lifetime: "终身会员",
-};
-
-type StatusMeta = {
-  label: string;
-  dotClassName: string;
-  badgeClassName: string;
 };
 
 const STATUS_META_MAP: Record<string, StatusMeta> = {
@@ -250,19 +124,31 @@ const STATUS_META_MAP: Record<string, StatusMeta> = {
     dotClassName: "bg-slate-400",
     badgeClassName: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
   },
-  paused: {
-    label: "已暂停",
-    dotClassName: "bg-slate-400",
-    badgeClassName: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
-  },
 };
-
-function formatTime(value?: string) {
-  return value ? new Date(value).toLocaleString() : "-";
-}
 
 function normalizeKey(value?: string | null) {
   return (value || "").trim().toLowerCase();
+}
+
+function formatTime(value?: string) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("zh-CN");
+}
+
+function formatDate(value?: string) {
+  const text = formatTime(value);
+  if (text === "-") return "-";
+  return text.split(" ")[0] || text;
+}
+
+function getRemainingDays(expiresAt?: string) {
+  if (!expiresAt) return null;
+  const parsed = new Date(expiresAt);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const diffMs = parsed.getTime() - Date.now();
+  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
 }
 
 function getUserLevelLabel(userLevel?: string, isSubscriber = false) {
@@ -290,67 +176,9 @@ function getStatusMeta(status?: string, isSubscriber = false): StatusMeta {
   };
 }
 
-function getRemainingDays(expiresAt?: string) {
-  if (!expiresAt) return null;
-  const parsed = new Date(expiresAt);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const diffMs = parsed.getTime() - Date.now();
-  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-}
-
-function getComputeLedgerTypeLabel(type?: string) {
-  const key = normalizeKey(type);
-  switch (key) {
-    case "reserve":
-      return "任务预扣";
-    case "release":
-      return "任务退回";
-    case "settle":
-      return "任务结算";
-    case "adjust":
-      return "兑换/调整";
-    case "init_grant":
-      return "初始赠送";
-    default:
-      return type || "-";
-  }
-}
-
-function numberFromAny(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return 0;
-}
-
-function pointHoldStatusLabel(value?: string) {
-  const key = normalizeKey(value);
-  switch (key) {
-    case "settled":
-      return "已结算";
-    case "held":
-      return "预冻结";
-    case "released":
-      return "已释放";
-    case "cancelled":
-      return "已取消";
-    case "failed":
-      return "失败";
-    default:
-      return value || "-";
-  }
-}
-
-function formatCNYValue(value: unknown) {
-  const n = numberFromAny(value);
-  if (n <= 0) return "-";
-  return `¥${n.toFixed(4)}`;
-}
-
 export default function SubscriptionPage() {
   const router = useRouter();
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [redeemCode, setRedeemCode] = useState("");
   const [validating, setValidating] = useState(false);
@@ -359,24 +187,6 @@ export default function SubscriptionPage() {
   const [latestRedeem, setLatestRedeem] = useState<LatestRedeemCard | null>(null);
   const [redeemRecords, setRedeemRecords] = useState<RedeemRecord[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
-  const [collectionCode, setCollectionCode] = useState("");
-  const [collectionValidating, setCollectionValidating] = useState(false);
-  const [collectionRedeeming, setCollectionRedeeming] = useState(false);
-  const [collectionValidation, setCollectionValidation] = useState<CollectionCodeValidateResponse | null>(null);
-  const [latestCollectionRedeem, setLatestCollectionRedeem] = useState<LatestCollectionRedeemCard | null>(null);
-  const [collectionEntitlements, setCollectionEntitlements] = useState<CollectionDownloadEntitlement[]>([]);
-  const [collectionEntitlementsLoading, setCollectionEntitlementsLoading] = useState(false);
-  const [computeAccount, setComputeAccount] = useState<ComputeAccountSnapshot | null>(null);
-  const [computeLedgers, setComputeLedgers] = useState<ComputeLedgerItem[]>([]);
-  const [computeRedeemCode, setComputeRedeemCode] = useState("");
-  const [computeValidating, setComputeValidating] = useState(false);
-  const [computeRedeeming, setComputeRedeeming] = useState(false);
-  const [computeValidation, setComputeValidation] = useState<ComputeRedeemValidateResponse | null>(null);
-  const [latestComputeRedeem, setLatestComputeRedeem] = useState<LatestComputeRedeemCard | null>(null);
-  const [computeRedeemRecords, setComputeRedeemRecords] = useState<ComputeRedeemRecord[]>([]);
-  const [computeRecordsLoading, setComputeRecordsLoading] = useState(false);
-  const [computeMessage, setComputeMessage] = useState<string | null>(null);
-  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -410,9 +220,7 @@ export default function SubscriptionPage() {
       router.replace("/login");
       return false;
     }
-    if (!res.ok) {
-      return false;
-    }
+    if (!res.ok) return false;
     const data = (await res.json()) as Profile;
     setProfile(data);
     return true;
@@ -440,100 +248,31 @@ export default function SubscriptionPage() {
     }
   }, [router]);
 
-  const loadCollectionEntitlements = useCallback(async () => {
-    setCollectionEntitlementsLoading(true);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-entitlements?page=1&page_size=50`);
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      if (!res.ok) {
-        setCollectionEntitlements([]);
-        return;
-      }
-      const data = (await res.json()) as CollectionDownloadEntitlementResponse;
-      setCollectionEntitlements(Array.isArray(data.items) ? data.items : []);
-    } catch {
-      setCollectionEntitlements([]);
-    } finally {
-      setCollectionEntitlementsLoading(false);
-    }
-  }, [router]);
-
-  const loadComputeAccount = useCallback(async () => {
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-account?limit=30`);
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      if (!res.ok) {
-        setComputeAccount(null);
-        setComputeLedgers([]);
-        return;
-      }
-      const data = (await res.json()) as ComputeAccountSummaryResponse;
-      setComputeAccount(data.account || null);
-      setComputeLedgers(Array.isArray(data.ledgers) ? data.ledgers : []);
-    } catch {
-      setComputeAccount(null);
-      setComputeLedgers([]);
-    }
-  }, [router]);
-
-  const loadComputeRedeemRecords = useCallback(async () => {
-    setComputeRecordsLoading(true);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-records?page=1&page_size=20`);
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      if (!res.ok) {
-        setComputeRedeemRecords([]);
-        return;
-      }
-      const data = (await res.json()) as ComputeRedeemRecordResponse;
-      setComputeRedeemRecords(Array.isArray(data.items) ? data.items : []);
-    } catch {
-      setComputeRedeemRecords([]);
-    } finally {
-      setComputeRecordsLoading(false);
-    }
-  }, [router]);
-
   useEffect(() => {
     const load = async () => {
       try {
-        const loaded = await loadProfile();
-        if (!loaded) {
+        const ok = await loadProfile();
+        if (!ok) {
           setMessage("加载订阅信息失败，请稍后重试");
           return;
         }
         await loadRedeemRecords();
-        await loadCollectionEntitlements();
-        await loadComputeAccount();
-        await loadComputeRedeemRecords();
       } catch {
         setMessage("加载订阅信息失败，请稍后重试");
       } finally {
         setLoading(false);
       }
     };
+    void load();
+  }, [loadProfile, loadRedeemRecords]);
 
-    load();
-  }, [loadCollectionEntitlements, loadComputeAccount, loadComputeRedeemRecords, loadProfile, loadRedeemRecords]);
-
-  const handleValidate = async () => {
+  const handleValidate = useCallback(async () => {
     const code = redeemCode.trim();
     if (!code) {
       setMessage("请输入兑换码");
       return;
     }
+
     setValidating(true);
     setMessage(null);
     try {
@@ -549,7 +288,7 @@ export default function SubscriptionPage() {
       }
       const data = (await res.json()) as RedeemValidateResponse & { error?: string };
       if (!res.ok) {
-        setMessage(data?.error || "验证失败，请稍后重试");
+        setMessage(data.error || "验证失败，请稍后重试");
         return;
       }
       setValidation(data);
@@ -559,14 +298,15 @@ export default function SubscriptionPage() {
     } finally {
       setValidating(false);
     }
-  };
+  }, [redeemCode, router]);
 
-  const handleRedeem = async () => {
+  const handleRedeem = useCallback(async () => {
     const code = redeemCode.trim();
     if (!code) {
       setMessage("请输入兑换码");
       return;
     }
+
     setRedeeming(true);
     setMessage(null);
     try {
@@ -582,12 +322,11 @@ export default function SubscriptionPage() {
       }
       const data = (await res.json()) as RedeemSubmitResponse;
       if (!res.ok) {
-        setMessage(data?.error || "兑换失败，请稍后重试");
+        setMessage(data.error || "兑换失败，请稍后重试");
         return;
       }
-      if (data.user) {
-        setProfile(data.user);
-      }
+
+      if (data.user) setProfile(data.user);
       setLatestRedeem({
         code_mask: data.code_mask,
         plan: data.plan,
@@ -597,7 +336,8 @@ export default function SubscriptionPage() {
       });
       setValidation(null);
       setRedeemCode("");
-      setMessage(data?.message || "兑换成功");
+      setMessage(data.message || "兑换成功");
+
       await loadProfile();
       await loadRedeemRecords();
     } catch {
@@ -605,167 +345,14 @@ export default function SubscriptionPage() {
     } finally {
       setRedeeming(false);
     }
-  };
-
-  const handleValidateCollectionCode = async () => {
-    const code = collectionCode.trim();
-    if (!code) {
-      setCollectionMessage("请输入合集次卡兑换码");
-      return;
-    }
-    setCollectionValidating(true);
-    setCollectionMessage(null);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-code/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      const data = (await res.json()) as CollectionCodeValidateResponse & { error?: string };
-      if (!res.ok) {
-        setCollectionMessage(data?.error || "验证失败，请稍后重试");
-        return;
-      }
-      setCollectionValidation(data);
-      setCollectionMessage(data.message || (data.valid ? "兑换码可用" : "兑换码不可用"));
-    } catch {
-      setCollectionMessage("验证失败，请稍后重试");
-    } finally {
-      setCollectionValidating(false);
-    }
-  };
-
-  const handleRedeemCollectionCode = async () => {
-    const code = collectionCode.trim();
-    if (!code) {
-      setCollectionMessage("请输入合集次卡兑换码");
-      return;
-    }
-    setCollectionRedeeming(true);
-    setCollectionMessage(null);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/collection-download-code/redeem`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      const data = (await res.json()) as CollectionCodeRedeemResponse;
-      if (!res.ok) {
-        setCollectionMessage(data?.error || "兑换失败，请稍后重试");
-        return;
-      }
-      setLatestCollectionRedeem({
-        code_mask: data.code_mask,
-        collection_title: data.collection_title,
-        granted_download_times: data.granted_download_times,
-        remaining_download_times: data.remaining_download_times,
-        expires_at: data.expires_at,
-      });
-      setCollectionValidation(null);
-      setCollectionCode("");
-      setCollectionMessage(data?.message || "兑换成功");
-      await loadCollectionEntitlements();
-    } catch {
-      setCollectionMessage("兑换失败，请稍后重试");
-    } finally {
-      setCollectionRedeeming(false);
-    }
-  };
-
-  const handleValidateComputeCode = async () => {
-    const code = computeRedeemCode.trim();
-    if (!code) {
-      setComputeMessage("请输入算力兑换码");
-      return;
-    }
-    setComputeValidating(true);
-    setComputeMessage(null);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-code/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      const data = (await res.json()) as ComputeRedeemValidateResponse & { error?: string };
-      if (!res.ok) {
-        setComputeMessage(data?.error || "验证失败，请稍后重试");
-        return;
-      }
-      setComputeValidation(data);
-      setComputeMessage(data.message || (data.valid ? "兑换码可用" : "兑换码不可用"));
-    } catch {
-      setComputeMessage("验证失败，请稍后重试");
-    } finally {
-      setComputeValidating(false);
-    }
-  };
-
-  const handleRedeemComputeCode = async () => {
-    const code = computeRedeemCode.trim();
-    if (!code) {
-      setComputeMessage("请输入算力兑换码");
-      return;
-    }
-    setComputeRedeeming(true);
-    setComputeMessage(null);
-    try {
-      const res = await fetchWithAuthRetry(`${API_BASE}/me/compute-redeem-code/redeem`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      if (res.status === 401) {
-        clearAuthSession();
-        router.replace("/login");
-        return;
-      }
-      const data = (await res.json()) as ComputeRedeemSubmitResponse;
-      if (!res.ok) {
-        setComputeMessage(data?.error || "兑换失败，请稍后重试");
-        return;
-      }
-      setLatestComputeRedeem({
-        code_mask: data.code_mask,
-        granted_points: data.granted_points,
-        duration_days: data.duration_days,
-        starts_at: data.starts_at,
-        expires_at: data.expires_at,
-        available_points: data.account?.available_points,
-      });
-      setComputeValidation(null);
-      setComputeRedeemCode("");
-      setComputeMessage(data?.message || "兑换成功");
-      if (data.account) setComputeAccount(data.account);
-      await loadComputeAccount();
-      await loadComputeRedeemRecords();
-    } catch {
-      setComputeMessage("兑换失败，请稍后重试");
-    } finally {
-      setComputeRedeeming(false);
-    }
-  };
+  }, [loadProfile, loadRedeemRecords, redeemCode, router]);
 
   if (loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center rounded-[2.5rem] border border-slate-100 bg-white p-10 shadow-sm">
         <div className="flex flex-col items-center gap-4">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-slate-100 border-t-emerald-500" />
-          <p className="text-sm font-bold text-slate-400 tracking-wider">正在加载订阅信息...</p>
+          <p className="text-sm font-bold tracking-wider text-slate-400">正在加载订阅信息...</p>
         </div>
       </div>
     );
@@ -774,12 +361,10 @@ export default function SubscriptionPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="relative overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/50 sm:p-10">
-        {/* 背景装饰 */}
         <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-emerald-50/50 blur-3xl" />
         <div className="absolute -bottom-10 -left-10 h-40 w-40 rounded-full bg-blue-50/50 blur-3xl" />
 
         <div className="relative">
-          {/* 头部用户信息 */}
           <div className="flex flex-col gap-6 md:flex-row md:items-center">
             <div className="h-24 w-24 shrink-0 overflow-hidden rounded-[1.5rem] bg-slate-100 ring-4 ring-white shadow-lg">
               <div className="relative h-full w-full">
@@ -794,557 +379,225 @@ export default function SubscriptionPage() {
                 手机：<span className="text-slate-600">{profile?.phone || "未绑定"}</span>
               </p>
             </div>
-            {isSubscriber && (
+            {isSubscriber ? (
               <div className="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-2 text-amber-600 ring-1 ring-amber-200">
                 <Crown size={18} className="fill-amber-500" />
                 <span className="text-sm font-black">{userLevelLabel}</span>
               </div>
-            )}
+            ) : null}
           </div>
 
-          {/* 当前订阅状态卡片 */}
-          <div className="mt-10 overflow-hidden rounded-[2.5rem] border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white p-8 md:p-10 shadow-sm relative group">
-            <div className="absolute top-0 right-0 p-8 opacity-5 transition-transform group-hover:scale-110 group-hover:rotate-12">
-              <Zap size={120} className="text-emerald-500" />
-            </div>
-            
-            <div className="relative z-10">
-              <div className="flex items-center gap-3 mb-8">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500 text-white shadow-lg shadow-emerald-200">
-                  <Zap size={24} />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-black text-slate-900">当前订阅权益</h2>
-                  <p className="text-xs font-bold text-emerald-600/60 uppercase tracking-widest">Current Subscription Benefits</p>
-                </div>
-              </div>
-              
-              <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
-                    <Users size={14} /> 用户等级
-                  </div>
-                  <div className="text-xl font-black text-slate-900">{userLevelLabel}</div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
-                    <Crown size={14} /> 订阅计划
-                  </div>
-                  <div className="text-xl font-black text-slate-900">{planLabel}</div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
-                    <ShieldCheck size={14} /> 订阅状态
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`h-2.5 w-2.5 rounded-full ${statusMeta.dotClassName}`} />
-                    <div className={`inline-flex items-center rounded-xl px-3 py-1 text-sm font-black ${statusMeta.badgeClassName}`}>
-                      {statusMeta.label}
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
-                    <Calendar size={14} /> 有效期至
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xl font-black text-slate-900">{formatTime(profile?.subscription_expires_at).split(' ')[0]}</div>
-                    <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-black ${
-                      remainingDays === null ? "bg-slate-100 text-slate-400" : remainingDays >= 0 ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-500"
-                    }`}>
-                      {remainingDays === null
-                        ? "暂无有效期信息"
-                        : remainingDays >= 0
-                          ? `剩余 ${remainingDays} 天`
-                          : `已过期 ${Math.abs(remainingDays)} 天`}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 兑换专区 */}
-          <div className="mt-10 relative group">
-            <div className="absolute -inset-1 rounded-[2.5rem] bg-gradient-to-r from-emerald-500/20 to-blue-500/20 blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-            <div className="relative rounded-[2.5rem] border border-slate-200 bg-white p-8 md:p-10 shadow-sm overflow-hidden">
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg">
-                      <Ticket size={24} />
-                    </div>
-                    <h2 className="text-2xl font-black text-slate-900">兑换专区</h2>
-                  </div>
-                  <p className="text-sm font-medium text-slate-400 max-w-md">
-                    输入您的 16 位兑换码以快速解锁高级合集下载权限或延长您的会员订阅时长。
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-4 sm:flex-row items-stretch">
-                <div className="relative flex-1 group/input">
-                  <input
-                    value={redeemCode}
-                    onChange={(event) => {
-                      setRedeemCode(event.target.value);
-                      setValidation(null);
-                    }}
-                    placeholder="请输入 16 位兑换码"
-                    className="h-16 w-full rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-6 text-lg font-black tracking-[0.2em] text-slate-900 outline-none transition-all placeholder:font-bold placeholder:tracking-normal placeholder:text-slate-300 focus:border-emerald-500 focus:bg-white focus:ring-8 focus:ring-emerald-500/5"
-                  />
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    disabled={validating}
-                    onClick={handleValidate}
-                    className="h-16 px-8 rounded-2xl border-2 border-slate-100 bg-white text-base font-black text-slate-600 transition-all hover:bg-slate-50 hover:border-slate-200 active:scale-95 disabled:opacity-60"
-                  >
-                    {validating ? "验证中..." : "验证"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={redeeming}
-                    onClick={handleRedeem}
-                    className="h-16 px-10 rounded-2xl bg-slate-900 text-base font-black text-white shadow-xl shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 hover:-translate-y-1 active:translate-y-0 disabled:opacity-60"
-                  >
-                    {redeeming ? "立即兑换" : "立即兑换"}
-                  </button>
-                </div>
-              </div>
-
-              {validation && (
-                <div className={`mt-8 animate-in fade-in slide-in-from-top-2 rounded-2xl border-2 p-6 ${
-                  validation.valid ? "border-emerald-100 bg-emerald-50/30" : "border-rose-100 bg-rose-50/30"
-                }`}>
-                  <div className="flex items-center gap-3 mb-4">
-                    {validation.valid ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-rose-500" />}
-                    <span className={`text-base font-black ${validation.valid ? "text-emerald-700" : "text-rose-700"}`}>
-                      {validation.message}
-                    </span>
-                  </div>
-                  {validation.valid && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-6 border-t border-emerald-100/50">
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">计划类型</div>
-                        <div className="text-base font-black text-slate-900">{getPlanLabel(validation.plan, true)}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">增加时长</div>
-                        <div className="text-base font-black text-emerald-600">+{validation.duration_days || 0} 天</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">生效时间</div>
-                        <div className="text-base font-black text-slate-900">{formatTime(validation.starts_at).split(' ')[0]}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">到期时间</div>
-                        <div className="text-base font-black text-slate-900">{formatTime(validation.expires_at).split(' ')[0]}</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 合集次卡兑换 */}
-          <div className="mt-8 rounded-[2.5rem] border border-blue-100 bg-blue-50/30 p-8 md:p-10">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500 text-white shadow-md shadow-blue-200">
-                <Ticket size={18} />
+          <div className="mt-10 overflow-hidden rounded-[2.5rem] border border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white p-8 md:p-10">
+            <div className="mb-8 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500 text-white shadow-lg shadow-emerald-200">
+                <Zap size={24} />
               </div>
               <div>
-                <h2 className="text-xl font-black text-slate-900">合集次卡兑换</h2>
-                <p className="text-xs font-bold uppercase tracking-widest text-blue-600/60">
-                  Collection Download Card
-                </p>
+                <h2 className="text-2xl font-black text-slate-900">当前订阅权益</h2>
+                <p className="text-xs font-bold uppercase tracking-widest text-emerald-600/60">当前订阅信息</p>
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <input
-                value={collectionCode}
-                onChange={(event) => {
-                  setCollectionCode(event.target.value);
-                  setCollectionValidation(null);
-                }}
-                placeholder="输入合集次卡兑换码"
-                className="h-14 flex-1 rounded-2xl border border-blue-100 bg-white px-5 text-base font-bold tracking-wider text-slate-800 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-              />
-              <button
-                type="button"
-                disabled={collectionValidating}
-                onClick={handleValidateCollectionCode}
-                className="h-14 rounded-2xl border border-blue-200 bg-white px-6 text-sm font-black text-blue-700 transition hover:bg-blue-50 disabled:opacity-60"
-              >
-                {collectionValidating ? "验证中..." : "验证"}
-              </button>
-              <button
-                type="button"
-                disabled={collectionRedeeming}
-                onClick={handleRedeemCollectionCode}
-                className="h-14 rounded-2xl bg-blue-600 px-8 text-sm font-black text-white shadow-lg shadow-blue-200 transition hover:bg-blue-500 disabled:opacity-60"
-              >
-                {collectionRedeeming ? "兑换中..." : "立即兑换"}
-              </button>
+            <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  <Users size={14} /> 用户等级
+                </div>
+                <div className="text-xl font-black text-slate-900">{userLevelLabel}</div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  <Crown size={14} /> 订阅计划
+                </div>
+                <div className="text-xl font-black text-slate-900">{planLabel}</div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  <ShieldCheck size={14} /> 订阅状态
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className={`h-2.5 w-2.5 rounded-full ${statusMeta.dotClassName}`} />
+                  <div className={`inline-flex items-center rounded-xl px-3 py-1 text-sm font-black ${statusMeta.badgeClassName}`}>
+                    {statusMeta.label}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  <Calendar size={14} /> 有效期至
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xl font-black text-slate-900">{formatDate(profile?.subscription_expires_at)}</div>
+                  <div
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-black ${
+                      remainingDays === null
+                        ? "bg-slate-100 text-slate-400"
+                        : remainingDays >= 0
+                          ? "bg-emerald-100 text-emerald-600"
+                          : "bg-rose-100 text-rose-500"
+                    }`}
+                  >
+                    {remainingDays === null
+                      ? "暂无有效期信息"
+                      : remainingDays >= 0
+                        ? `剩余 ${remainingDays} 天`
+                        : `已过期 ${Math.abs(remainingDays)} 天`}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-10 rounded-[2.5rem] border border-slate-200 bg-white p-8 md:p-10 shadow-sm">
+            <div className="mb-8 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg">
+                <Ticket size={24} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">订阅兑换码</h2>
+                <p className="text-sm font-medium text-slate-400">输入订阅兑换码可开通或续期会员</p>
+              </div>
             </div>
 
-            {collectionValidation ? (
+            <div className="flex flex-col gap-4 sm:flex-row items-stretch">
+              <input
+                value={redeemCode}
+                onChange={(event) => {
+                  setRedeemCode(event.target.value);
+                  setValidation(null);
+                }}
+                placeholder="请输入 16 位兑换码"
+                className="h-16 w-full flex-1 rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-6 text-lg font-black tracking-[0.2em] text-slate-900 outline-none transition-all placeholder:font-bold placeholder:tracking-normal placeholder:text-slate-300 focus:border-emerald-500 focus:bg-white focus:ring-8 focus:ring-emerald-500/5"
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={validating}
+                  onClick={() => void handleValidate()}
+                  className="h-16 rounded-2xl border-2 border-slate-100 bg-white px-8 text-base font-black text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {validating ? "验证中..." : "验证"}
+                </button>
+                <button
+                  type="button"
+                  disabled={redeeming}
+                  onClick={() => void handleRedeem()}
+                  className="h-16 rounded-2xl bg-slate-900 px-10 text-base font-black text-white shadow-xl shadow-slate-200 transition-all hover:bg-emerald-500 disabled:opacity-60"
+                >
+                  {redeeming ? "兑换中..." : "立即兑换"}
+                </button>
+              </div>
+            </div>
+
+            {validation ? (
               <div
-                className={`mt-4 rounded-2xl border px-5 py-4 text-sm ${
-                  collectionValidation.valid ? "border-emerald-100 bg-emerald-50/50 text-emerald-700" : "border-rose-100 bg-rose-50/50 text-rose-700"
+                className={`mt-8 rounded-2xl border-2 p-6 ${
+                  validation.valid ? "border-emerald-100 bg-emerald-50/30" : "border-rose-100 bg-rose-50/30"
                 }`}
               >
-                <div className="font-black">{collectionValidation.message}</div>
-                {collectionValidation.valid ? (
-                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
-                    <div>合集：{collectionValidation.collection_title || `#${collectionValidation.collection_id || "-"}`}</div>
-                    <div>到账次数：{collectionValidation.granted_download_times || 0}</div>
-                    <div>
-                      可兑换用户：{collectionValidation.used_redeem_users || 0}/{collectionValidation.max_redeem_users || 0}
+                <div className="mb-4 flex items-center gap-3">
+                  {validation.valid ? <CheckCircle2 size={20} className="text-emerald-500" /> : <AlertCircle size={20} className="text-rose-500" />}
+                  <span className={`text-base font-black ${validation.valid ? "text-emerald-700" : "text-rose-700"}`}>
+                    {validation.message}
+                  </span>
+                </div>
+                {validation.valid ? (
+                  <div className="grid grid-cols-2 gap-6 border-t border-emerald-100/50 pt-6 md:grid-cols-4">
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">计划类型</div>
+                      <div className="text-base font-black text-slate-900">{getPlanLabel(validation.plan, true)}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">增加时长</div>
+                      <div className="text-base font-black text-emerald-600">+{validation.duration_days || 0} 天</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">生效时间</div>
+                      <div className="text-base font-black text-slate-900">{formatDate(validation.starts_at)}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600/50">到期时间</div>
+                      <div className="text-base font-black text-slate-900">{formatDate(validation.expires_at)}</div>
                     </div>
                   </div>
                 ) : null}
               </div>
             ) : null}
-
-            {collectionMessage ? (
-              <div className="mt-4 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm font-bold text-blue-700">
-                {collectionMessage}
-              </div>
-            ) : null}
-
-            {latestCollectionRedeem ? (
-              <div className="mt-4 rounded-2xl border border-indigo-100 bg-white px-5 py-4 text-sm text-slate-700">
-                <div className="font-black text-indigo-700">本次次卡兑换成功</div>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  <div>合集：{latestCollectionRedeem.collection_title || "-"}</div>
-                  <div>本次到账：{latestCollectionRedeem.granted_download_times || 0}</div>
-                  <div>剩余次数：{latestCollectionRedeem.remaining_download_times || 0}</div>
-                  <div>兑换码：{latestCollectionRedeem.code_mask || "-"}</div>
-                  <div className="sm:col-span-2">过期时间：{formatTime(latestCollectionRedeem.expires_at)}</div>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-6 overflow-hidden rounded-2xl border border-blue-100 bg-white">
-              <div className="border-b border-blue-50 px-5 py-3 text-sm font-black text-slate-700">我的合集次卡权益</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-blue-50/40 text-xs uppercase tracking-widest text-slate-500">
-                    <tr>
-                      <th className="px-5 py-3">合集</th>
-                      <th className="px-5 py-3">总次数</th>
-                      <th className="px-5 py-3">已用</th>
-                      <th className="px-5 py-3">剩余</th>
-                      <th className="px-5 py-3">状态</th>
-                      <th className="px-5 py-3">过期时间</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-blue-50">
-                    {collectionEntitlements.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-5 py-3 font-semibold text-slate-700">
-                          {item.collection_title || `合集 #${item.collection_id}`}
-                        </td>
-                        <td className="px-5 py-3">{item.granted_download_times || 0}</td>
-                        <td className="px-5 py-3">{item.used_download_times || 0}</td>
-                        <td className="px-5 py-3 font-black text-blue-600">{item.remaining_download_times || 0}</td>
-                        <td className="px-5 py-3">{item.status || "-"}</td>
-                        <td className="px-5 py-3">{formatTime(item.expires_at)}</td>
-                      </tr>
-                    ))}
-                    {collectionEntitlements.length === 0 && !collectionEntitlementsLoading ? (
-                      <tr>
-                        <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
-                          暂无合集次卡权益
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
 
-          {/* 算力点兑换 */}
-          <div className="mt-8 rounded-[2.5rem] border border-violet-100 bg-violet-50/30 p-8 md:p-10">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500 text-white shadow-md shadow-violet-200">
-                  <Zap size={18} />
+          {latestRedeem ? (
+            <div className="mt-8 rounded-[2.5rem] border-2 border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white p-8 md:p-10">
+              <div className="mb-8 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500 text-white shadow-lg shadow-indigo-200">
+                  <CheckCircle2 size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">算力点兑换</h2>
-                  <p className="text-xs font-bold uppercase tracking-widest text-violet-600/60">
-                    Compute Credits Redeem
-                  </p>
+                  <h2 className="text-2xl font-black text-slate-900">本次兑换成功</h2>
+                  <p className="text-xs font-bold uppercase tracking-widest text-indigo-600/60">兑换结果</p>
                 </div>
               </div>
-              <div className="rounded-2xl border border-violet-100 bg-white px-4 py-2 text-xs font-bold text-slate-600">
-                可用算力点：<span className="text-violet-600">{computeAccount?.available_points ?? 0}</span>
-                <span className="mx-2 text-slate-300">|</span>
-                计费倍率：{computeAccount?.cost_markup_multiplier || 2}x
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <input
-                value={computeRedeemCode}
-                onChange={(event) => {
-                  setComputeRedeemCode(event.target.value);
-                  setComputeValidation(null);
-                }}
-                placeholder="输入算力兑换码"
-                className="h-14 flex-1 rounded-2xl border border-violet-100 bg-white px-5 text-base font-bold tracking-wider text-slate-800 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10"
-              />
-              <button
-                type="button"
-                disabled={computeValidating}
-                onClick={handleValidateComputeCode}
-                className="h-14 rounded-2xl border border-violet-200 bg-white px-6 text-sm font-black text-violet-700 transition hover:bg-violet-50 disabled:opacity-60"
-              >
-                {computeValidating ? "验证中..." : "验证"}
-              </button>
-              <button
-                type="button"
-                disabled={computeRedeeming}
-                onClick={handleRedeemComputeCode}
-                className="h-14 rounded-2xl bg-violet-600 px-8 text-sm font-black text-white shadow-lg shadow-violet-200 transition hover:bg-violet-500 disabled:opacity-60"
-              >
-                {computeRedeeming ? "兑换中..." : "立即兑换"}
-              </button>
-            </div>
-
-            {computeValidation ? (
-              <div
-                className={`mt-4 rounded-2xl border px-5 py-4 text-sm ${
-                  computeValidation.valid ? "border-emerald-100 bg-emerald-50/50 text-emerald-700" : "border-rose-100 bg-rose-50/50 text-rose-700"
-                }`}
-              >
-                <div className="font-black">{computeValidation.message}</div>
-                {computeValidation.valid ? (
-                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
-                    <div>到账算力：{computeValidation.granted_points || 0}</div>
-                    <div>兑换码：{computeValidation.code_mask || "-"}</div>
-                    <div>有效期：{computeValidation.duration_days && computeValidation.duration_days > 0 ? `${computeValidation.duration_days} 天` : "不限制"}</div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {computeMessage ? (
-              <div className="mt-4 rounded-2xl border border-violet-100 bg-white px-4 py-3 text-sm font-bold text-violet-700">
-                {computeMessage}
-              </div>
-            ) : null}
-
-            {latestComputeRedeem ? (
-              <div className="mt-4 rounded-2xl border border-violet-100 bg-white px-5 py-4 text-sm text-slate-700">
-                <div className="font-black text-violet-700">本次算力兑换成功</div>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  <div>兑换码：{latestComputeRedeem.code_mask || "-"}</div>
-                  <div>本次到账：{latestComputeRedeem.granted_points || 0}</div>
-                  <div>当前可用：{latestComputeRedeem.available_points ?? computeAccount?.available_points ?? 0}</div>
-                  <div>生效时间：{formatTime(latestComputeRedeem.starts_at)}</div>
-                  <div className="sm:col-span-2">到期时间：{latestComputeRedeem.expires_at ? formatTime(latestComputeRedeem.expires_at) : "不限制"}</div>
+              <div className="grid gap-8 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">兑换码</div>
+                  <div className="text-xl font-black tracking-wider text-slate-900">{latestRedeem.code_mask || "-"}</div>
                 </div>
-              </div>
-            ) : null}
-
-            <div className="mt-6 overflow-hidden rounded-2xl border border-violet-100 bg-white">
-              <div className="flex items-center justify-between border-b border-violet-50 px-5 py-3 text-sm font-black text-slate-700">
-                <span>我的算力兑换记录</span>
-                {computeRecordsLoading ? <span className="text-xs font-semibold text-slate-400">加载中...</span> : null}
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-violet-50/40 text-xs uppercase tracking-widest text-slate-500">
-                    <tr>
-                      <th className="px-5 py-3">兑换码</th>
-                      <th className="px-5 py-3">到账算力</th>
-                      <th className="px-5 py-3">生效时间</th>
-                      <th className="px-5 py-3">到期时间</th>
-                      <th className="px-5 py-3">兑换时间</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-violet-50">
-                    {computeRedeemRecords.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-5 py-3 font-semibold text-slate-700">{item.code_mask || "-"}</td>
-                        <td className="px-5 py-3 font-black text-violet-600">{item.granted_points || 0}</td>
-                        <td className="px-5 py-3">{formatTime(item.granted_starts_at)}</td>
-                        <td className="px-5 py-3">{item.granted_expires_at ? formatTime(item.granted_expires_at) : "不限制"}</td>
-                        <td className="px-5 py-3">{formatTime(item.created_at)}</td>
-                      </tr>
-                    ))}
-                    {computeRedeemRecords.length === 0 && !computeRecordsLoading ? (
-                      <tr>
-                        <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
-                          暂无算力兑换记录
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="mt-6 overflow-hidden rounded-2xl border border-violet-100 bg-white">
-              <div className="border-b border-violet-50 px-5 py-3 text-sm font-black text-slate-700">最近算力流水（含任务消耗）</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-violet-50/40 text-xs uppercase tracking-widest text-slate-500">
-                    <tr>
-                      <th className="px-5 py-3">类型</th>
-                      <th className="px-5 py-3">点数变动</th>
-                      <th className="px-5 py-3">真实成本</th>
-                      <th className="px-5 py-3">任务</th>
-                      <th className="px-5 py-3">说明</th>
-                      <th className="px-5 py-3">时间</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-violet-50">
-                    {computeLedgers.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-5 py-3">{getComputeLedgerTypeLabel(item.type)}</td>
-                        <td className={`px-5 py-3 font-black ${Number(item.points || 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                          {Number(item.points || 0) >= 0 ? "+" : ""}
-                          {item.points || 0}
-                        </td>
-                        <td className="px-5 py-3">
-                          <div className="font-semibold text-slate-700">
-                            {formatCNYValue(item.metadata?.billable_cost_cny)}
-                          </div>
-                          <div className="mt-0.5 text-xs text-slate-400">
-                            {String(item.metadata?.billable_cost_source || "").trim() || "-"}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3">
-                          {item.job_id ? (
-                            <div className="space-y-0.5">
-                              <Link href={`/mine/works/${item.job_id}`} className="font-semibold text-violet-700 hover:text-violet-600">
-                                任务 #{item.job_id}
-                              </Link>
-                              <div className="text-xs text-slate-400">
-                                {pointHoldStatusLabel(String(item.metadata?.hold_status || item.remark || "").trim())}
-                              </div>
-                            </div>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="px-5 py-3">{item.remark || "-"}</td>
-                        <td className="px-5 py-3">{formatTime(item.created_at)}</td>
-                      </tr>
-                    ))}
-                    {computeLedgers.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
-                          暂无算力流水
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* 本次兑换结果 */}
-          {latestRedeem && (
-            <div className="mt-8 animate-in zoom-in-95 rounded-[2.5rem] border-2 border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white p-8 md:p-10 relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-8 opacity-5">
-                <CheckCircle2 size={120} className="text-indigo-500" />
-              </div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-8">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500 text-white shadow-lg shadow-indigo-200">
-                    <CheckCircle2 size={24} />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-black text-slate-900">本次兑换成功</h2>
-                    <p className="text-xs font-bold text-indigo-600/60 uppercase tracking-widest">Successful Redemption</p>
-                  </div>
+                <div className="space-y-2">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">增加时长</div>
+                  <div className="text-xl font-black text-indigo-600">+{latestRedeem.duration_days || 0} 天</div>
                 </div>
-                <div className="grid gap-8 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">兑换码</div>
-                    <div className="text-xl font-black text-slate-900 tracking-wider">{latestRedeem.code_mask || "-"}</div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">增加时长</div>
-                    <div className="text-xl font-black text-indigo-600">+{latestRedeem.duration_days || 0} 天</div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">新有效期至</div>
-                    <div className="text-xl font-black text-slate-900">{formatTime(latestRedeem.expires_at).split(' ')[0]}</div>
-                  </div>
+                <div className="space-y-2">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-indigo-600/40">新有效期至</div>
+                  <div className="text-xl font-black text-slate-900">{formatDate(latestRedeem.expires_at)}</div>
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
-          {/* 权益对比 */}
           <div className="mt-10 grid gap-6 md:grid-cols-2">
-            <div className="group relative overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white p-10 transition-all hover:shadow-xl hover:border-slate-300">
-              <div className="relative z-10">
-                <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-xl font-black text-slate-900 flex items-center gap-3">
-                    <div className="h-3 w-3 rounded-full bg-slate-300" />
-                    免费用户
-                  </h3>
-                  <span className="text-xs font-black uppercase tracking-widest text-slate-400">Basic</span>
-                </div>
-                <ul className="space-y-4">
-                  {[
-                    "浏览和搜索全部公开合集",
-                    "支持下载单张表情图片",
-                    "支持点赞、收藏与分享"
-                  ].map(item => (
-                    <li key={item} className="flex items-center gap-4 text-sm font-bold text-slate-500">
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-300">
-                        <ShieldCheck size={14} />
-                      </div>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
+            <div className="overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white p-10">
+              <div className="mb-8 flex items-center justify-between">
+                <h3 className="flex items-center gap-3 text-xl font-black text-slate-900">
+                  <div className="h-3 w-3 rounded-full bg-slate-300" />
+                  免费用户
+                </h3>
               </div>
+              <ul className="space-y-4">
+                {["浏览和搜索全部公开合集", "支持下载单张表情图片", "支持点赞、收藏与分享"].map((item) => (
+                  <li key={item} className="flex items-center gap-4 text-sm font-bold text-slate-500">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-300">
+                      <ShieldCheck size={14} />
+                    </div>
+                    {item}
+                  </li>
+                ))}
+              </ul>
             </div>
 
-            <div className="group relative overflow-hidden rounded-[2.5rem] border-2 border-emerald-500 bg-emerald-50/20 p-10 transition-all hover:shadow-2xl hover:shadow-emerald-500/10">
-              <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-emerald-500/10 blur-3xl transition-all group-hover:bg-emerald-500/20" />
-              <div className="relative z-10">
-                <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-xl font-black text-emerald-600 flex items-center gap-3">
-                    <Crown size={24} className="fill-emerald-500" />
-                    订阅会员
-                  </h3>
-                  <span className="text-xs font-black uppercase tracking-widest text-emerald-500">Premium</span>
-                </div>
-                <ul className="space-y-4">
-                  {[
-                    "包含免费用户全部权益",
-                    "支持一键下载合集 ZIP 包",
-                    "专属极速下载通道，无需等待",
-                    "通过兑换码快速开通与续期"
-                  ].map(item => (
-                    <li key={item} className="flex items-center gap-4 text-sm font-bold text-emerald-800">
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
-                        <CheckCircle2 size={14} />
-                      </div>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
+            <div className="overflow-hidden rounded-[2.5rem] border-2 border-emerald-500 bg-emerald-50/20 p-10">
+              <div className="mb-8 flex items-center justify-between">
+                <h3 className="flex items-center gap-3 text-xl font-black text-emerald-600">
+                  <Crown size={24} className="fill-emerald-500" />
+                  订阅会员
+                </h3>
               </div>
+              <ul className="space-y-4">
+                {[
+                  "包含免费用户全部权益",
+                  "支持一键下载合集 ZIP 包",
+                  "专属极速下载通道，无需等待",
+                  "通过兑换码快速开通与续期",
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-4 text-sm font-bold text-emerald-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
+                      <CheckCircle2 size={14} />
+                    </div>
+                    {item}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
-          {/* 兑换记录 */}
           <div className="mt-12 space-y-6">
             <div className="flex items-center justify-between px-4">
               <div className="space-y-1">
@@ -1352,79 +605,57 @@ export default function SubscriptionPage() {
                   <History size={24} className="text-slate-400" />
                   我的兑换记录
                 </h3>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Redemption History</p>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">订阅兑换记录</p>
               </div>
-              {recordsLoading && <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-500" />}
+              {recordsLoading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-500" /> : null}
             </div>
 
             <div className="overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white shadow-sm">
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full border-collapse text-left">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/50">
                       <th className="px-8 py-5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">兑换码</th>
                       <th className="px-8 py-5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">计划类型</th>
                       <th className="px-8 py-5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">有效期至</th>
-                      <th className="px-8 py-5 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 text-right">兑换时间</th>
+                      <th className="px-8 py-5 text-right text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">兑换时间</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {redeemRecords.map((item) => (
-                      <tr key={item.id} className="group transition-colors hover:bg-slate-50/50">
-                        <td className="px-8 py-6">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-sm transition-all">
-                              <Ticket size={16} />
-                            </div>
-                            <span className="text-base font-black text-slate-700 tracking-wider">{item.code_mask || "-"}</span>
-                          </div>
-                        </td>
+                      <tr key={item.id} className="transition-colors hover:bg-slate-50/50">
+                        <td className="px-8 py-6 text-base font-black tracking-wider text-slate-700">{item.code_mask || "-"}</td>
                         <td className="px-8 py-6">
                           <span className="inline-flex items-center rounded-xl bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-600 ring-1 ring-emerald-100">
                             {getPlanLabel(item.granted_plan, true)}
                           </span>
                         </td>
-                        <td className="px-8 py-6">
-                          <div className="flex flex-col">
-                            <span className="text-sm font-black text-slate-700">{formatTime(item.granted_expires_at).split(' ')[0]}</span>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Expires At</span>
-                          </div>
-                        </td>
-                        <td className="px-8 py-6 text-right">
-                          <div className="flex flex-col items-end">
-                            <span className="text-sm font-bold text-slate-400">{formatTime(item.created_at).split(' ')[0]}</span>
-                            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tighter">{formatTime(item.created_at).split(' ')[1]}</span>
-                          </div>
-                        </td>
+                        <td className="px-8 py-6 text-sm font-black text-slate-700">{formatDate(item.granted_expires_at)}</td>
+                        <td className="px-8 py-6 text-right text-sm font-bold text-slate-400">{formatTime(item.created_at)}</td>
                       </tr>
                     ))}
-                    {redeemRecords.length === 0 && !recordsLoading && (
+
+                    {redeemRecords.length === 0 && !recordsLoading ? (
                       <tr>
-                        <td className="px-8 py-20 text-center" colSpan={4}>
-                          <div className="flex flex-col items-center gap-4 opacity-20">
-                            <div className="h-20 w-20 flex items-center justify-center rounded-[2rem] bg-slate-100 text-slate-400">
-                              <History size={48} />
-                            </div>
-                            <p className="text-lg font-black tracking-widest text-slate-400">暂无兑换记录</p>
-                          </div>
+                        <td className="px-8 py-16 text-center text-slate-400" colSpan={4}>
+                          暂无订阅兑换记录
                         </td>
                       </tr>
-                    )}
+                    ) : null}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
 
-          {/* 底部提示 */}
-          {message && !validation && (
-            <div className="mt-8 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-4 rounded-[2rem] border-2 border-slate-100 bg-slate-50/50 px-6 py-5 text-sm font-black text-slate-600">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white shadow-sm text-slate-400">
+          {message && !validation ? (
+            <div className="mt-8 flex items-center gap-4 rounded-[2rem] border-2 border-slate-100 bg-slate-50/50 px-6 py-5 text-sm font-black text-slate-600">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm">
                 <Info size={18} />
               </div>
               {message}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

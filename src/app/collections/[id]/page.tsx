@@ -227,6 +227,69 @@ function getEmojiSizeLabel(sizeBytes?: number) {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function parseDownloadFilenameFromHeader(contentDisposition?: string | null) {
+  const raw = String(contentDisposition || "").trim();
+  if (!raw) return "";
+
+  const utf8Match = raw.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      return utf8Match[1].trim();
+    }
+  }
+
+  const plainMatch = raw.match(/filename\s*=\s*\"?([^\";]+)\"?/i);
+  if (plainMatch?.[1]) {
+    return plainMatch[1].trim();
+  }
+  return "";
+}
+
+function inferEmojiDownloadExt(emoji?: ApiEmoji | null) {
+  const format = String(emoji?.format || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^image\//, "");
+  if (format === "jpeg") return "jpg";
+  if (format) return format;
+
+  const source = String(emoji?.file_url || emoji?.preview_url || "")
+    .split("?")[0]
+    .split("#")[0];
+  const ext = source.includes(".") ? source.split(".").pop() || "" : "";
+  return ext ? ext.toLowerCase() : "png";
+}
+
+function sanitizeDownloadStem(raw: string) {
+  return (
+    (raw || "")
+      .trim()
+      .replace(/[\\/:*?"<>|\s]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 80) || "emoji"
+  );
+}
+
+function buildEmojiDownloadName(emoji?: ApiEmoji | null, preferredName = "") {
+  const ext = inferEmojiDownloadExt(emoji);
+  const base = (preferredName || emoji?.title || `emoji-${emoji?.id || "download"}`).trim();
+  if (!base) return `emoji.${ext}`;
+  if (/\.[a-z0-9]{2,5}$/i.test(base)) return sanitizeDownloadStem(base.replace(/\.[a-z0-9]{2,5}$/i, "")) + base.match(/\.[a-z0-9]{2,5}$/i)?.[0];
+  return `${sanitizeDownloadStem(base)}.${ext}`;
+}
+
+function triggerBlobDownload(blob: Blob, fileName: string) {
+  if (!blob || blob.size <= 0) return;
+  const objectURL = URL.createObjectURL(blob);
+  triggerURLDownload(objectURL, fileName);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectURL);
+  }, 1800);
+}
+
 function FallbackImage({ url, alt }: { url: string; alt: string }) {
   const candidates = useMemo(() => buildImageCandidates(url), [url]);
   const [index, setIndex] = useState(0);
@@ -471,25 +534,34 @@ export default function CollectionDetailPage() {
     void handleDownloadAllZips();
   };
 
-  const handleDownloadEmoji = async (emojiId: number) => {
+  const handleDownloadEmoji = async (emoji: ApiEmoji) => {
+    const emojiId = Number(emoji?.id || 0);
     if (!emojiId || downloadingEmoji) return;
     if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
     setNotice(null);
     setDownloadingEmoji(emojiId);
     try {
-      const result = await requestDownloadLink(`${API_BASE}/emojis/${emojiId}/download`);
-      if (!result.ok) {
-        if (result.error.status === 401) {
-          openAuthPrompt("请先登录再继续下载");
-          return;
-        }
+      const res = await fetchWithAuthRetry(`${API_BASE}/emojis/${emojiId}/download-file`);
+      if (res.status === 401) {
+        openAuthPrompt("请先登录再继续下载");
+        return;
+      }
+      if (!res.ok) {
+        const apiErr = await parseApiError(res);
         setNotice(
-          result.error.message ||
-            resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载表情")
+          apiErr.message ||
+            resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载表情")
         );
         return;
       }
-      triggerURLDownload(result.data.url, result.data.name || `emoji-${emojiId}`);
+      const blob = await res.blob();
+      if (!blob || blob.size <= 0) {
+        setNotice("下载文件为空，请稍后重试");
+        return;
+      }
+      const headerName = parseDownloadFilenameFromHeader(res.headers.get("content-disposition"));
+      const fileName = buildEmojiDownloadName(emoji, headerName);
+      triggerBlobDownload(blob, fileName);
       setDownloadedEmoji(emojiId);
       window.setTimeout(() => {
         setDownloadedEmoji((prev) => (prev === emojiId ? null : prev));
@@ -830,7 +902,7 @@ export default function CollectionDetailPage() {
                     </div>
 
                     <button
-                      onClick={() => handleDownloadEmoji(emoji.id)}
+                      onClick={() => handleDownloadEmoji(emoji)}
                       className={`flex h-9 w-full items-center justify-center gap-2 rounded-xl text-[11px] font-bold transition-all ${
                         isDownloaded
                           ? "bg-emerald-50 text-emerald-600"

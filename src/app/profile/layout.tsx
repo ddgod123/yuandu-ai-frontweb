@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import ProfileMenu from "@/components/profile/ProfileMenu";
 import {
   AUTH_CHANGE_EVENT,
-  clearAuthSession,
   ensureAuthSession,
-  hasStoredAuthState,
 } from "@/lib/auth-client";
 
 export default function ProfileLayout({ children }: { children: React.ReactNode }) {
@@ -49,9 +47,6 @@ export default function ProfileLayout({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (!authChecked) return;
     if (!isAuthorized) {
-      if (hasStoredAuthState()) {
-        clearAuthSession();
-      }
       router.replace("/login");
     }
   }, [authChecked, isAuthorized, router]);

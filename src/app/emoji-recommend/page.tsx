@@ -3,7 +3,19 @@ import { ChevronRight, Image as ImageIcon } from "lucide-react";
 import LatestGrid from "@/components/home/LatestGrid";
 import FeaturedCollections from "@/components/home/FeaturedCollections";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
+export const dynamic = "force-dynamic";
+
+function resolveApiBase() {
+  const raw = (process.env.NEXT_PUBLIC_API_BASE || "/api").trim();
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\/+$/, "");
+  }
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`;
+  return `http://127.0.0.1:5050${normalized}`.replace(/\/+$/, "");
+}
+
+const API_BASE = resolveApiBase();
+const FETCH_TIMEOUT_MS = 8000;
 
 type CollectionBrief = {
   id: number;
@@ -29,6 +41,7 @@ async function fetchHomeStats(): Promise<HomeStats | null> {
   try {
     const res = await fetch(`${API_BASE}/stats/home`, {
       next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as HomeStats;
@@ -49,6 +62,7 @@ async function fetchLatestCollections(limit = 12): Promise<CollectionBrief[]> {
     });
     const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
       next: { revalidate: 300 },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { items?: CollectionBrief[] };
@@ -69,6 +83,7 @@ async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
     });
     const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { items?: CollectionBrief[] };
@@ -122,7 +137,7 @@ export default async function EmojiRecommendPage() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
             </span>
-            今日已新增 <span className="text-emerald-700">{todayText}</span> 个表情
+            今日已新增 <span className="text-emerald-700">{todayText}</span> 张图片
           </div>
 
           <h1 className="text-6xl font-black tracking-tighter text-slate-900 md:text-8xl lg:text-9xl">
@@ -186,7 +201,7 @@ export default async function EmojiRecommendPage() {
               <div className="h-1 w-8 rounded-full bg-blue-500" />
               New Arrival
             </div>
-            <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">新到馆表情</h2>
+            <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">最新图片资产</h2>
             <p className="mx-auto max-w-2xl text-base font-medium text-slate-400">刚刚入库的精彩内容，抢先一睹为快。</p>
           </div>
 
@@ -233,4 +248,3 @@ export default async function EmojiRecommendPage() {
     </main>
   );
 }
-

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import AdminLayout from "@/components/layout/admin-layout";
 import Image from "next/image";
 import { Plus, Search } from "lucide-react";
+import { API_BASE } from "@/lib/auth-client";
 
 interface Emoji {
   id: number;
@@ -27,7 +28,7 @@ export default function EmojiManager() {
     if (search) params.append("q", search);
     if (collectionFilter) params.append("collection_id", collectionFilter);
 
-    fetch(`http://localhost:5050/api/emojis?${params.toString()}`)
+    fetch(`${API_BASE}/emojis?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         setEmojis(data.items || []);
@@ -51,7 +52,7 @@ export default function EmojiManager() {
 
     setUploading(true);
     try {
-      const res = await fetch("http://localhost:5050/api/emojis", {
+      const res = await fetch(`${API_BASE}/emojis`, {
         method: "POST",
         body: formData,
       });
@@ -69,7 +70,7 @@ export default function EmojiManager() {
   const handleDelete = async (id: number) => {
     if (!confirm("Are you sure?")) return;
     try {
-      const res = await fetch(`http://localhost:5050/api/emojis/${id}`, {
+      const res = await fetch(`${API_BASE}/emojis/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {

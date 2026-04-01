@@ -5,13 +5,21 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Keep admin entry out of frontweb.
-  if (
-    pathname.startsWith("/admin") ||
-    pathname === "/mine/my-emojis" ||
-    pathname === "/profile/my-collections"
-  ) {
+  if (pathname.startsWith("/admin")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/mine/favorites/collections";
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname === "/mine/my-emojis") {
     const url = request.nextUrl.clone();
     url.pathname = "/mine/favorites/emojis";
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname === "/profile/my-collections") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/mine/favorites/collections";
     return NextResponse.redirect(url);
   }
 

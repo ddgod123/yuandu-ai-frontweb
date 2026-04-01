@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import AdminLayout from "@/components/layout/admin-layout";
 import { Download, RefreshCw, Image as ImageIcon, Settings2 } from "lucide-react";
 import { toPng } from "html-to-image";
+import { API_BASE } from "@/lib/auth-client";
 
 interface Collection {
   id: number;
@@ -38,7 +39,7 @@ export default function XhsGenerator() {
   const borderRadius = 12;
 
   useEffect(() => {
-    fetch("http://localhost:5050/api/collections")
+    fetch(`${API_BASE}/collections`)
       .then((res) => res.json())
       .then((data) => {
         setCollections(data.items || []);
@@ -51,7 +52,7 @@ export default function XhsGenerator() {
 
   useEffect(() => {
     if (selectedColId) {
-      fetch(`http://localhost:5050/api/emojis?collection_id=${selectedColId}&page_size=50`)
+      fetch(`${API_BASE}/emojis?collection_id=${selectedColId}&page_size=50`)
         .then((res) => res.json())
         .then((data) => {
           setEmojis(data.items || []);

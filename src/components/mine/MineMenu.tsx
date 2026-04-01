@@ -12,12 +12,14 @@ export default function MineMenu() {
   const currentPath = pathname || "";
 
   const isWorksRoute = currentPath === "/mine/works" || currentPath.startsWith("/mine/works/");
-  const menuItems = isWorksRoute
-    ? [{ href: "/mine/works", label: "我的作品" }]
-    : [
-        { href: "/mine/favorites/emojis", label: "收藏表情包" },
-        { href: "/mine/favorites/collections", label: "收藏合集" },
-      ];
+  if (isWorksRoute) {
+    return null;
+  }
+
+  const menuItems = [
+    { href: "/mine/favorites/emojis", label: "收藏表情包" },
+    { href: "/mine/favorites/collections", label: "收藏合集" },
+  ];
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-2 shadow-sm">

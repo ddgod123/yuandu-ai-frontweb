@@ -12,6 +12,8 @@ import {
   Smartphone,
   Scissors,
   Zap,
+  Cpu,
+  ImagePlus,
 } from "lucide-react";
 
 const workflow = [
@@ -205,16 +207,54 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 5. Footer CTA Section */}
+      {/* 5. Future Architecture Section */}
+      <section className="border-t border-slate-100 bg-slate-50/30 py-24 lg:py-32">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="mb-16 text-center">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1.5 text-sm font-bold text-blue-700 shadow-sm ring-1 ring-blue-100/50">
+              <Cpu size={16} />
+              AI 驱动的未来架构
+            </div>
+            <h2 className="text-3xl font-black tracking-tight text-slate-900 md:text-4xl">开始把视频，变成真正有价值的图片内容</h2>
+            <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-600">
+              即将引入前沿开源视觉大模型，从“截取”走向“重构”，为每一帧注入极致的画质与细节。
+            </p>
+          </div>
+
+          <div className="grid gap-8 md:grid-cols-2">
+            <div className="group relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-10 transition-all hover:-translate-y-1 hover:border-blue-200 hover:shadow-xl hover:shadow-blue-900/5">
+              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-slate-50 transition-colors group-hover:bg-blue-50"></div>
+              <ImagePlus size={36} className="relative z-10 text-slate-700 transition-colors group-hover:text-blue-600" />
+              <h3 className="relative z-10 mt-8 text-2xl font-bold text-slate-900">Real-ESRGAN</h3>
+              <div className="relative z-10 mt-2 text-sm font-semibold text-blue-600">基础超分与人脸修复</div>
+              <p className="relative z-10 mt-4 text-base leading-7 text-slate-600">
+                突破原始视频分辨率限制。通过深度学习算法智能补充画面细节、修复模糊人脸与老旧画质，让提取出的每一张图片都达到海报级清晰度。
+              </p>
+            </div>
+
+            <div className="group relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-10 transition-all hover:-translate-y-1 hover:border-purple-200 hover:shadow-xl hover:shadow-purple-900/5">
+              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-slate-50 transition-colors group-hover:bg-purple-50"></div>
+              <Sparkles size={36} className="relative z-10 text-slate-700 transition-colors group-hover:text-purple-600" />
+              <h3 className="relative z-10 mt-8 text-2xl font-bold text-slate-900">SeedVR2 (DiT)</h3>
+              <div className="relative z-10 mt-2 text-sm font-semibold text-purple-600">高级生成式重绘与修复</div>
+              <p className="relative z-10 mt-4 text-base leading-7 text-slate-600">
+                基于最新的 Diffusion Transformer 架构。针对严重受损、残缺或需要深度重构的复杂画面，进行生成式修复，赋予废片全新的生命力与商业价值。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 6. Footer CTA Section */}
       <section className="pb-24 pt-12">
         <div className="mx-auto max-w-6xl px-6">
           <div className="relative overflow-hidden rounded-[2.5rem] bg-slate-900 px-8 py-20 text-center text-white shadow-2xl">
             <div className="absolute left-0 top-0 h-full w-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-emerald-900/40 via-slate-900 to-slate-900"></div>
             
             <div className="relative z-10">
-              <h2 className="text-4xl font-black tracking-tight md:text-5xl">开始把视频，变成真正有价值的图片内容</h2>
+              <h2 className="text-4xl font-black tracking-tight md:text-5xl">准备好体验全新的视觉生产力了吗？</h2>
               <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-                先跑通 PNG 主线，再逐步打磨场景策略与质量闭环，让每次生成都可控、可复盘、可进化。
+                混合模型场景策略与质量闭环，让每次生成都可控、可复盘、可进化。
               </p>
               <div className="mt-10 flex flex-wrap justify-center gap-4">
                 <Link

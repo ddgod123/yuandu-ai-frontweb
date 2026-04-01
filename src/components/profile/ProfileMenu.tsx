@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 const menuItems = [
   { href: "/profile", label: "个人信息" },
   { href: "/profile/subscription", label: "订阅管理" },
+  { href: "/profile/compute", label: "算力管理" },
+  { href: "/profile/cards", label: "次卡管理" },
 ];
 
 function isActive(pathname: string, href: string) {
