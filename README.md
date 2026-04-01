@@ -1,6 +1,12 @@
 # Yuandu AI Frontweb
 
+[![Website](https://img.shields.io/badge/Website-www.emoji.icu-0ea5e9?style=flat-square&logo=googlechrome&logoColor=white)](https://www.emoji.icu)
+![Platform](https://img.shields.io/badge/Platform-AI%20Visual%20Asset%20Production-111827?style=flat-square)
+![Role](https://img.shields.io/badge/Role-User%20Portal%20%26%20Workspace-2563eb?style=flat-square)
+
 > User-facing Visual Asset Portal & AI Creation Workspace
+
+**Live Website:** [https://www.emoji.icu](https://www.emoji.icu)
 
 ## 1) 定位（Positioning）
 
@@ -12,7 +18,13 @@
 
 ---
 
-## 2) 平台连接关系（Platform Topology）
+## 2) 架构总览图（Architecture Overview）
+
+![Yuandu AI Architecture Overview](./docs/assets/architecture-overview.png)
+
+---
+
+## 3) 平台连接关系（Platform Topology）
 
 ```mermaid
 flowchart LR
@@ -27,7 +39,7 @@ flowchart LR
 
 ---
 
-## 3) 前端模块关系图（Frontend Modules）
+## 4) 前端模块关系图（Frontend Modules）
 
 ```mermaid
 flowchart TD
@@ -49,7 +61,7 @@ flowchart TD
 
 ---
 
-## 4) 路线图目录（Roadmap）
+## 5) 路线图目录（Roadmap）
 
 | 阶段 | 方向 | 状态 |
 |---|---|---|
@@ -59,7 +71,7 @@ flowchart TD
 
 ---
 
-## 5) Tech Stack
+## 6) Tech Stack
 
 - Next.js 16
 - React 19
@@ -68,7 +80,7 @@ flowchart TD
 
 ---
 
-## 6) Quick Start
+## 7) Quick Start
 
 ```bash
 npm install
@@ -80,7 +92,7 @@ Default: `http://localhost:5918`
 
 ---
 
-## 7) Environment
+## 8) Environment
 
 ```bash
 NEXT_PUBLIC_API_BASE=/api
@@ -91,7 +103,7 @@ NEXT_PUBLIC_API_BASE=/api
 
 ---
 
-## 8) Build & Run
+## 9) Build & Run
 
 ```bash
 npm run build
@@ -100,12 +112,12 @@ npm run start
 
 ---
 
-## 9) Deployment
+## 10) Deployment
 
 See: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
 
 ---
 
-## 10) License
+## 11) License
 
 See `LICENSE`.
