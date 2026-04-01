@@ -1,4 +1,4 @@
-# Frontweb 部署说明（生产）
+# 元都AI Frontweb 部署说明（生产）
 
 ## 1. 依赖
 
@@ -37,7 +37,7 @@ EOF
 
 ```ini
 [Unit]
-Description=Emoji Frontweb
+Description=Yuandu AI Frontweb
 After=network.target
 
 [Service]
