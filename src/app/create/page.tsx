@@ -9,6 +9,7 @@ import {
   fetchWithAuthRetry,
 } from "@/lib/auth-client";
 import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
+import { getPrimaryStorageRootPrefix, isStorageObjectKey } from "@/lib/storage-prefix";
 import { useJobStream, type JobStreamEnvelope } from "@/hooks/useJobStream";
 import { AIConsole } from "@/components/create/workbench/AIConsole";
 import { TaskExplorer } from "@/components/create/workbench/TaskExplorer";
@@ -610,7 +611,8 @@ function makeVideoKey(fileName: string) {
   const y = date.getFullYear();
   const m = `${date.getMonth() + 1}`.padStart(2, "0");
   const d = `${date.getDate()}`.padStart(2, "0");
-  return `emoji/user-video/${y}${m}${d}/${Date.now()}-${safe}`;
+  const rootPrefix = getPrimaryStorageRootPrefix();
+  return `${rootPrefix}/user-video/${y}${m}${d}/${Date.now()}-${safe}`;
 }
 
 function buildInvalidSourceVideoMessage(payload: CreateJobErrorPayload | null) {
@@ -1821,7 +1823,7 @@ export default function CreatePage() {
       const source = (item.file_key || item.file_url || item.thumb_url || "").trim();
       const objectKey = extractObjectKey(source);
       const likelyVideoAsset = objectKey.includes("/video-image/");
-      const proxyURL = objectKey ? `${API_BASE}/storage/proxy?key=${encodeURIComponent(objectKey)}` : "";
+      const proxyURL = isStorageObjectKey(objectKey) ? `${API_BASE}/storage/proxy?key=${encodeURIComponent(objectKey)}` : "";
 
       if (proxyURL) {
         try {

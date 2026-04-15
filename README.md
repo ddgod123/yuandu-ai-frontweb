@@ -96,10 +96,14 @@ Default: `http://localhost:5918`
 
 ```bash
 NEXT_PUBLIC_API_BASE=/api
+NEXT_PUBLIC_QINIU_ROOT_PREFIX=emoji
+# NEXT_PUBLIC_QINIU_ALLOWED_ROOT_PREFIXES=emoji,emoji-dev,emoji-prod,emoji-prod-v2
 ```
 
 - Local direct backend: `http://localhost:5050/api`
 - Production: recommend Nginx reverse proxy on `/api`
+- `NEXT_PUBLIC_QINIU_ROOT_PREFIX`: 当前环境主对象存储前缀（如 `emoji-dev` / `emoji-prod-v2`）
+- `NEXT_PUBLIC_QINIU_ALLOWED_ROOT_PREFIXES`（可选）: 允许的历史前缀白名单（逗号分隔）
 
 ---
 

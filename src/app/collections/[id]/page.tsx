@@ -8,6 +8,7 @@ import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Info, Boo
 import { API_BASE, emitAuthChange, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 import { emitBehaviorEvent } from "@/lib/behavior-events";
 import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
+import { isStorageObjectKey } from "@/lib/storage-prefix";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
 import {
   ApiEmoji,
@@ -39,7 +40,7 @@ function extractObjectKey(rawUrl: string) {
 
 function buildStorageProxyCandidate(rawUrl: string) {
   const key = extractObjectKey(rawUrl);
-  if (!key || !key.startsWith("emoji/")) return "";
+  if (!isStorageObjectKey(key)) return "";
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 

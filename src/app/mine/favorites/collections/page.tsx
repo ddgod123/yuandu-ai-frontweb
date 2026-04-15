@@ -11,6 +11,7 @@ import {
   ensureAuthSession,
   fetchWithAuthRetry,
 } from "@/lib/auth-client";
+import { isStorageObjectKey } from "@/lib/storage-prefix";
 const PAGE_SIZE = 12;
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
 
@@ -93,7 +94,7 @@ function extractObjectKey(rawUrl: string) {
 
 function buildStorageProxyCandidate(rawUrl: string) {
   const key = extractObjectKey(rawUrl);
-  if (!key || !key.startsWith("emoji/")) return "";
+  if (!isStorageObjectKey(key)) return "";
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 
