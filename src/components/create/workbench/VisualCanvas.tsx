@@ -23,6 +23,7 @@ type VisualCanvasProps = {
   onDownloadOriginal: (item: WorkbenchResultEmojiItem) => void;
   downloadingOriginal: boolean;
   resolveResultImageURL: (item?: WorkbenchResultEmojiItem | null) => string;
+  resolvePipelineModeLabel: (job: WorkbenchJobItem | null) => string;
 };
 
 function normalizeFormatLabel(value?: string) {
@@ -58,6 +59,7 @@ export function VisualCanvas({
   onDownloadOriginal,
   downloadingOriginal,
   resolveResultImageURL,
+  resolvePipelineModeLabel,
 }: VisualCanvasProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -67,6 +69,7 @@ export function VisualCanvas({
   }, [activePreviewIndex, activeResultEmojis.length]);
 
   const activePreviewItem = useMemo(() => activeResultEmojis[safeIndex] || null, [activeResultEmojis, safeIndex]);
+  const pipelineModeLabel = useMemo(() => resolvePipelineModeLabel(activeJob), [activeJob, resolvePipelineModeLabel]);
 
   const canPrev = activeResultEmojis.length > 1 && safeIndex > 0;
   const canNext = activeResultEmojis.length > 1 && safeIndex < activeResultEmojis.length - 1;
@@ -136,6 +139,11 @@ export function VisualCanvas({
               <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
                 {stageLabelMap[(activeJob.stage || "").trim().toLowerCase()] || activeJob.stage || "-"}
               </span>
+              {pipelineModeLabel ? (
+                <span className="rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 ring-1 ring-inset ring-sky-600/20">
+                  {pipelineModeLabel}
+                </span>
+              ) : null}
               {showSyncBadge ? (
                 <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
                   streamMode === "streaming" ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20" : "bg-amber-50 text-amber-700 ring-amber-600/20"

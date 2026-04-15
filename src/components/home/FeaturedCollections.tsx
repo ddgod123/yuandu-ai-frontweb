@@ -41,10 +41,10 @@ export default function FeaturedCollections({ items }: { items: FeaturedCollecti
         <Link
           href={`/collections/${item.id}`}
           key={item.id}
-          className="group relative flex flex-col overflow-hidden rounded-[2rem] border border-slate-100 bg-white p-2 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-emerald-100 hover:shadow-[0_20px_40px_-15px_rgba(16,185,129,0.15)]"
+          className="group relative flex flex-col transition-all duration-500 hover:-translate-y-2"
         >
           {/* 封面图容器 */}
-          <div className="relative aspect-[4/3] w-full overflow-hidden rounded-[1.5rem] bg-slate-50">
+          <div className="relative aspect-[4/3] w-full overflow-hidden rounded-[2.5rem] bg-slate-50 shadow-sm ring-1 ring-inset ring-slate-100/50 transition-all duration-500 group-hover:shadow-[0_30px_60px_-15px_rgba(15,23,42,0.15)] group-hover:ring-emerald-100">
             {item.cover ? (
               <Image
                 src={item.cover}
@@ -52,7 +52,7 @@ export default function FeaturedCollections({ items }: { items: FeaturedCollecti
                 fill
                 unoptimized
                 sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
-                className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
+                className="absolute inset-0 h-full w-full object-cover transition-transform duration-1000 group-hover:scale-110"
                 onError={(event) => handleImageError(event.currentTarget)}
               />
             ) : (
@@ -60,43 +60,43 @@ export default function FeaturedCollections({ items }: { items: FeaturedCollecti
             )}
             
             {/* 渐变遮罩 */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
             
             {/* 推荐标签 */}
-            <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 backdrop-blur-md shadow-sm">
+            <div className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1.5 backdrop-blur-md shadow-sm">
               <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              <span className="text-[10px] font-black tracking-wider text-slate-800 uppercase">Featured</span>
+              <span className="text-[10px] font-black tracking-[0.1em] text-slate-800 uppercase">Featured</span>
             </div>
 
-            {/* 悬浮显示的张数 */}
-            <div className="absolute bottom-3 right-3 translate-y-2 opacity-0 transition-all duration-500 group-hover:translate-y-0 group-hover:opacity-100">
-              <div className="flex items-center gap-1.5 rounded-xl bg-black/50 px-3 py-1.5 text-[10px] font-bold text-white backdrop-blur-md">
-                <Layers size={12} />
-                {(item.file_count || 0).toLocaleString()} Emojis
+            {/* 底部信息悬浮显示 */}
+            <div className="absolute bottom-5 left-5 right-5 translate-y-4 opacity-0 transition-all duration-500 group-hover:translate-y-0 group-hover:opacity-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md ring-1 ring-white/30">
+                    <User size={14} />
+                  </div>
+                  <span className="text-xs font-bold text-white drop-shadow-sm">{item.author}</span>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1 text-[10px] font-black text-white shadow-lg shadow-emerald-500/20">
+                  <Layers size={12} />
+                  {item.file_count || 0} P
+                </div>
               </div>
             </div>
           </div>
 
           {/* 内容区域 */}
-          <div className="flex flex-1 flex-col p-4">
-            <h3 className="line-clamp-2 min-h-[3rem] text-lg font-black leading-tight text-slate-900 transition-colors group-hover:text-emerald-600">
+          <div className="mt-6 px-2">
+            <h3 className="line-clamp-1 text-xl font-black tracking-tight text-slate-900 transition-colors group-hover:text-emerald-600">
               {item.title}
             </h3>
             
-            <div className="mt-3 flex items-center gap-2">
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                <User size={12} />
-              </div>
-              <p className="text-xs font-bold text-slate-400 truncate">by {item.author}</p>
-            </div>
-
-            {/* 底部数据栏 */}
-            <div className="mt-auto pt-4 flex items-center gap-4 border-t border-slate-50">
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 transition-colors group-hover:text-rose-500">
+            <div className="mt-4 flex items-center gap-4 text-slate-400">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold transition-colors group-hover:text-rose-500">
                 <Heart size={14} className={item.like_count ? "fill-rose-500 text-rose-500" : ""} />
                 <span>{(item.like_count || 0).toLocaleString()}</span>
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 transition-colors group-hover:text-amber-500">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold transition-colors group-hover:text-amber-500">
                 <Bookmark size={14} className={item.favorite_count ? "fill-amber-500 text-amber-500" : ""} />
                 <span>{(item.favorite_count || 0).toLocaleString()}</span>
               </div>

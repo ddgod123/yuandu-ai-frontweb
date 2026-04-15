@@ -366,9 +366,9 @@ export default function SubscriptionPage() {
 
         <div className="relative">
           <div className="flex flex-col gap-6 md:flex-row md:items-center">
-            <div className="h-24 w-24 shrink-0 overflow-hidden rounded-[1.5rem] bg-slate-100 ring-4 ring-white shadow-lg">
+            <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full bg-transparent shadow-lg">
               <div className="relative h-full w-full">
-                <Image src={avatarPreview} alt="avatar" fill unoptimized className="object-cover" />
+                <Image src={avatarPreview} alt="avatar" fill unoptimized className="rounded-full object-cover" />
               </div>
             </div>
             <div className="flex-1 space-y-1">
@@ -552,51 +552,6 @@ export default function SubscriptionPage() {
               </div>
             </div>
           ) : null}
-
-          <div className="mt-10 grid gap-6 md:grid-cols-2">
-            <div className="overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white p-10">
-              <div className="mb-8 flex items-center justify-between">
-                <h3 className="flex items-center gap-3 text-xl font-black text-slate-900">
-                  <div className="h-3 w-3 rounded-full bg-slate-300" />
-                  免费用户
-                </h3>
-              </div>
-              <ul className="space-y-4">
-                {["浏览和搜索全部公开合集", "支持下载单张表情图片", "支持点赞、收藏与分享"].map((item) => (
-                  <li key={item} className="flex items-center gap-4 text-sm font-bold text-slate-500">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-300">
-                      <ShieldCheck size={14} />
-                    </div>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="overflow-hidden rounded-[2.5rem] border-2 border-emerald-500 bg-emerald-50/20 p-10">
-              <div className="mb-8 flex items-center justify-between">
-                <h3 className="flex items-center gap-3 text-xl font-black text-emerald-600">
-                  <Crown size={24} className="fill-emerald-500" />
-                  订阅会员
-                </h3>
-              </div>
-              <ul className="space-y-4">
-                {[
-                  "包含免费用户全部权益",
-                  "支持一键下载合集 ZIP 包",
-                  "专属极速下载通道，无需等待",
-                  "通过兑换码快速开通与续期",
-                ].map((item) => (
-                  <li key={item} className="flex items-center gap-4 text-sm font-bold text-emerald-800">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
-                      <CheckCircle2 size={14} />
-                    </div>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
 
           <div className="mt-12 space-y-6">
             <div className="flex items-center justify-between px-4">

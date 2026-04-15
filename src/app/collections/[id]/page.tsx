@@ -4,50 +4,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Info, Bookmark, ChevronDown } from "lucide-react";
+import { ArrowLeft, Check, Download, Heart, Loader2, ThumbsUp, Layers, Info, Bookmark, ChevronDown, Eye } from "lucide-react";
 import { API_BASE, emitAuthChange, ensureAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
+import { emitBehaviorEvent } from "@/lib/behavior-events";
 import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
 import AuthPromptModal from "@/components/common/AuthPromptModal";
-const PAGE_SIZE = 60;
-
-type TagBrief = {
-  id: number;
-  name: string;
-  slug?: string;
-};
-
-type ApiCollection = {
-  id: number;
-  title: string;
-  description?: string;
-  cover_url?: string;
-  file_count?: number;
-  download_code?: string;
-  favorite_count?: number;
-  like_count?: number;
-  download_count?: number;
-  favorited?: boolean;
-  liked?: boolean;
-  tags?: TagBrief[];
-};
-
-type ZipItem = {
-  id: number;
-  key: string;
-  name: string;
-  size_bytes?: number;
-  uploaded_at?: string;
-};
-
-type ApiEmoji = {
-  id: number;
-  title: string;
-  preview_url?: string;
-  file_url?: string;
-  format?: string;
-  size_bytes?: number;
-  favorited?: boolean;
-};
+import {
+  ApiEmoji,
+  useCollectionDetailData,
+} from "@/hooks/useCollectionDetailData";
+const PAGE_SIZE = 30;
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
 
@@ -293,23 +259,36 @@ function triggerBlobDownload(blob: Blob, fileName: string) {
 function FallbackImage({ url, alt }: { url: string; alt: string }) {
   const candidates = useMemo(() => buildImageCandidates(url), [url]);
   const [index, setIndex] = useState(0);
+  const [loadedSrc, setLoadedSrc] = useState("");
   const src = candidates[index];
+  const showSkeleton = loadedSrc !== src;
 
   if (!src) {
-    return <div className="h-full w-full bg-slate-50" />;
+    return (
+      <div className="relative h-full w-full overflow-hidden bg-slate-100">
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100" />
+      </div>
+    );
   }
 
   return (
-    <Image
-      src={src}
-      alt={alt}
-      fill
-      unoptimized
-      className="absolute inset-0 h-full w-full object-cover"
-      onError={() => {
-        setIndex((prev) => (prev + 1 < candidates.length ? prev + 1 : prev));
-      }}
-    />
+    <>
+      {showSkeleton ? (
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100" />
+      ) : null}
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        unoptimized
+        className="absolute inset-0 h-full w-full object-cover"
+        onLoad={() => setLoadedSrc(src)}
+        onError={() => {
+          setLoadedSrc("");
+          setIndex((prev) => (prev + 1 < candidates.length ? prev + 1 : prev));
+        }}
+      />
+    </>
   );
 }
 
@@ -319,12 +298,7 @@ export default function CollectionDetailPage() {
   const idParam = params?.id;
   const collectionId = Number(Array.isArray(idParam) ? idParam[0] : idParam);
 
-  const [collection, setCollection] = useState<ApiCollection | null>(null);
-  const [emojis, setEmojis] = useState<ApiEmoji[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadingAllZipBundle, setDownloadingAllZipBundle] = useState(false);
@@ -333,111 +307,29 @@ export default function CollectionDetailPage() {
   const [downloadingEmoji, setDownloadingEmoji] = useState<number | null>(null);
   const [togglingEmojiFavorite, setTogglingEmojiFavorite] = useState<number | null>(null);
   const [downloadedEmoji, setDownloadedEmoji] = useState<number | null>(null);
-  const [zipItems, setZipItems] = useState<ZipItem[]>([]);
-  const [loadingZips, setLoadingZips] = useState(false);
   const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
 
+  const {
+    collection,
+    setCollection,
+    emojis,
+    setEmojis,
+    total,
+    loading,
+    loadingDetail,
+    zipItems,
+    loadingZips,
+  } = useCollectionDetailData(collectionId, page, PAGE_SIZE);
+
   useEffect(() => {
     if (!collectionId) return;
-    const controller = new AbortController();
-
-    const loadDetail = async () => {
-      setLoadingDetail(true);
-      try {
-        const res = await fetchWithAuthRetry(`${API_BASE}/collections/${collectionId}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          return;
-        }
-        const data = (await res.json()) as ApiCollection;
-        setCollection(data);
-      } catch {
-        if (controller.signal.aborted) return;
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoadingDetail(false);
-        }
-      }
-    };
-
-    loadDetail();
-
-    return () => {
-      controller.abort();
-    };
+    emitBehaviorEvent("page_view_collection_detail", {
+      collection_id: collectionId,
+      metadata: {
+        page: "collection_detail",
+      },
+    });
   }, [collectionId]);
-
-  useEffect(() => {
-    if (!collectionId) return;
-    const controller = new AbortController();
-
-    const loadZips = async () => {
-      setLoadingZips(true);
-      try {
-        const res = await fetchWithAuthRetry(`${API_BASE}/collections/${collectionId}/zips`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          return;
-        }
-        const data = (await res.json()) as { items?: ZipItem[] };
-        setZipItems(Array.isArray(data.items) ? data.items : []);
-      } catch {
-        if (controller.signal.aborted) return;
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoadingZips(false);
-        }
-      }
-    };
-
-    loadZips();
-
-    return () => {
-      controller.abort();
-    };
-  }, [collectionId]);
-
-  useEffect(() => {
-    if (!collectionId) return;
-    const controller = new AbortController();
-
-    const loadEmojis = async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({
-          collection_id: String(collectionId),
-          page: String(page),
-          page_size: String(PAGE_SIZE),
-        });
-        const res = await fetchWithAuthRetry(`${API_BASE}/emojis?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          return;
-        }
-        const payload = (await res.json()) as { items?: ApiEmoji[]; total?: number };
-        const items = Array.isArray(payload.items) ? payload.items : [];
-        const totalCount = typeof payload.total === "number" ? payload.total : items.length;
-
-        setTotal(totalCount);
-        setEmojis((prev) => (page === 1 ? items : [...prev, ...items]));
-      } catch {
-        if (controller.signal.aborted) return;
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    loadEmojis();
-
-    return () => {
-      controller.abort();
-    };
-  }, [collectionId, page]);
 
   const canLoadMore = emojis.length < total;
 
@@ -463,7 +355,23 @@ export default function CollectionDetailPage() {
 
   const handleDownloadZip = async (zipKey?: string) => {
     if (!collectionId || downloadingZip) return;
-    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) {
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "unauthorized",
+        metadata: {
+          mode: zipKey ? "single_zip" : "latest_zip",
+        },
+      });
+      return;
+    }
+    emitBehaviorEvent("collection_zip_download", {
+      collection_id: collectionId,
+      metadata: {
+        mode: zipKey ? "single_zip" : "latest_zip",
+      },
+    });
     setNotice(null);
     setDownloadingZip(true);
     try {
@@ -477,9 +385,25 @@ export default function CollectionDetailPage() {
       const result = await requestDownloadLink(endpoint);
       if (!result.ok) {
         if (result.error.status === 401) {
+          emitBehaviorEvent("collection_zip_download", {
+            collection_id: collectionId,
+            success: false,
+            error_code: "unauthorized",
+            metadata: {
+              mode: zipKey ? "single_zip" : "latest_zip",
+            },
+          });
           openAuthPrompt("请先登录再继续下载");
           return;
         }
+        emitBehaviorEvent("collection_zip_download", {
+          collection_id: collectionId,
+          success: false,
+          error_code: result.error.code || `http_${result.error.status}`,
+          metadata: {
+            mode: zipKey ? "single_zip" : "latest_zip",
+          },
+        });
         setNotice(
           result.error.message ||
             resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载合集")
@@ -488,7 +412,22 @@ export default function CollectionDetailPage() {
       }
       triggerURLDownload(result.data.url, result.data.name || buildCollectionZipName(collection?.title, collectionId));
       bumpCollectionDownloadCount();
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: true,
+        metadata: {
+          mode: zipKey ? "single_zip" : "latest_zip",
+        },
+      });
     } catch {
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "network_error",
+        metadata: {
+          mode: zipKey ? "single_zip" : "latest_zip",
+        },
+      });
       setNotice("下载失败，请稍后重试");
     } finally {
       setDownloadingZip(false);
@@ -497,7 +436,23 @@ export default function CollectionDetailPage() {
 
   const handleDownloadAllZips = async () => {
     if (!collectionId || downloadingZip || zipItems.length === 0) return;
-    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) {
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "unauthorized",
+        metadata: {
+          mode: "zip_bundle_all",
+        },
+      });
+      return;
+    }
+    emitBehaviorEvent("collection_zip_download", {
+      collection_id: collectionId,
+      metadata: {
+        mode: "zip_bundle_all",
+      },
+    });
     setNotice(null);
     setDownloadingZip(true);
     setDownloadingAllZipBundle(true);
@@ -505,9 +460,25 @@ export default function CollectionDetailPage() {
       const result = await requestDownloadLink(`${API_BASE}/collections/${collectionId}/download-zip-all`);
       if (!result.ok) {
         if (result.error.status === 401) {
+          emitBehaviorEvent("collection_zip_download", {
+            collection_id: collectionId,
+            success: false,
+            error_code: "unauthorized",
+            metadata: {
+              mode: "zip_bundle_all",
+            },
+          });
           openAuthPrompt("请先登录再继续下载");
           return;
         }
+        emitBehaviorEvent("collection_zip_download", {
+          collection_id: collectionId,
+          success: false,
+          error_code: result.error.code || `http_${result.error.status}`,
+          metadata: {
+            mode: "zip_bundle_all",
+          },
+        });
         setNotice(
           result.error.message ||
             resolveDownloadNotice(result.error.status, result.error.code, "下载失败，请稍后重试", "下载合集")
@@ -517,7 +488,22 @@ export default function CollectionDetailPage() {
       const fileName = buildCollectionZipName(collection?.title, collectionId);
       triggerURLDownload(result.data.url, result.data.name || fileName);
       bumpCollectionDownloadCount();
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: true,
+        metadata: {
+          mode: "zip_bundle_all",
+        },
+      });
     } catch {
+      emitBehaviorEvent("collection_zip_download", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "network_error",
+        metadata: {
+          mode: "zip_bundle_all",
+        },
+      });
       setNotice("下载失败，请稍后重试");
     } finally {
       setDownloadingZip(false);
@@ -537,17 +523,41 @@ export default function CollectionDetailPage() {
   const handleDownloadEmoji = async (emoji: ApiEmoji) => {
     const emojiId = Number(emoji?.id || 0);
     if (!emojiId || downloadingEmoji) return;
-    if (!(await ensureAuthenticated("请先登录再继续下载"))) return;
+    if (!(await ensureAuthenticated("请先登录再继续下载"))) {
+      emitBehaviorEvent("emoji_download", {
+        collection_id: collectionId || undefined,
+        emoji_id: emojiId,
+        success: false,
+        error_code: "unauthorized",
+      });
+      return;
+    }
+    emitBehaviorEvent("emoji_download", {
+      collection_id: collectionId || undefined,
+      emoji_id: emojiId,
+    });
     setNotice(null);
     setDownloadingEmoji(emojiId);
     try {
       const res = await fetchWithAuthRetry(`${API_BASE}/emojis/${emojiId}/download-file`);
       if (res.status === 401) {
+        emitBehaviorEvent("emoji_download", {
+          collection_id: collectionId || undefined,
+          emoji_id: emojiId,
+          success: false,
+          error_code: "unauthorized",
+        });
         openAuthPrompt("请先登录再继续下载");
         return;
       }
       if (!res.ok) {
         const apiErr = await parseApiError(res);
+        emitBehaviorEvent("emoji_download", {
+          collection_id: collectionId || undefined,
+          emoji_id: emojiId,
+          success: false,
+          error_code: apiErr.code || `http_${res.status}`,
+        });
         setNotice(
           apiErr.message ||
             resolveDownloadNotice(res.status, apiErr.code, "下载失败，请稍后重试", "下载表情")
@@ -556,17 +566,34 @@ export default function CollectionDetailPage() {
       }
       const blob = await res.blob();
       if (!blob || blob.size <= 0) {
+        emitBehaviorEvent("emoji_download", {
+          collection_id: collectionId || undefined,
+          emoji_id: emojiId,
+          success: false,
+          error_code: "empty_file",
+        });
         setNotice("下载文件为空，请稍后重试");
         return;
       }
       const headerName = parseDownloadFilenameFromHeader(res.headers.get("content-disposition"));
       const fileName = buildEmojiDownloadName(emoji, headerName);
       triggerBlobDownload(blob, fileName);
+      emitBehaviorEvent("emoji_download", {
+        collection_id: collectionId || undefined,
+        emoji_id: emojiId,
+        success: true,
+      });
       setDownloadedEmoji(emojiId);
       window.setTimeout(() => {
         setDownloadedEmoji((prev) => (prev === emojiId ? null : prev));
       }, 1600);
     } catch {
+      emitBehaviorEvent("emoji_download", {
+        collection_id: collectionId || undefined,
+        emoji_id: emojiId,
+        success: false,
+        error_code: "network_error",
+      });
       setNotice("下载失败，请稍后重试");
     } finally {
       setDownloadingEmoji(null);
@@ -575,11 +602,29 @@ export default function CollectionDetailPage() {
 
   const toggleEmojiFavorite = async (emoji: ApiEmoji) => {
     if (!emoji?.id || togglingEmojiFavorite === emoji.id) return;
-    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
+    const isRemoving = Boolean(emoji.favorited);
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) {
+      emitBehaviorEvent("emoji_favorite_toggle", {
+        collection_id: collectionId || undefined,
+        emoji_id: emoji.id,
+        success: false,
+        error_code: "unauthorized",
+        metadata: {
+          action: isRemoving ? "unfavorite" : "favorite",
+        },
+      });
+      return;
+    }
+    emitBehaviorEvent("emoji_favorite_toggle", {
+      collection_id: collectionId || undefined,
+      emoji_id: emoji.id,
+      metadata: {
+        action: isRemoving ? "unfavorite" : "favorite",
+      },
+    });
     setNotice(null);
     setTogglingEmojiFavorite(emoji.id);
     try {
-      const isRemoving = Boolean(emoji.favorited);
       const url = isRemoving
         ? `${API_BASE}/favorites/${emoji.id}`
         : `${API_BASE}/favorites`;
@@ -589,14 +634,40 @@ export default function CollectionDetailPage() {
         body: isRemoving ? undefined : JSON.stringify({ emoji_id: emoji.id }),
       });
       if (res.status === 401) {
+        emitBehaviorEvent("emoji_favorite_toggle", {
+          collection_id: collectionId || undefined,
+          emoji_id: emoji.id,
+          success: false,
+          error_code: "unauthorized",
+          metadata: {
+            action: isRemoving ? "unfavorite" : "favorite",
+          },
+        });
         openAuthPrompt("请先登录再继续收藏");
         return;
       }
       if (!res.ok) {
         const apiErr = await parseApiError(res);
+        emitBehaviorEvent("emoji_favorite_toggle", {
+          collection_id: collectionId || undefined,
+          emoji_id: emoji.id,
+          success: false,
+          error_code: apiErr.code || `http_${res.status}`,
+          metadata: {
+            action: isRemoving ? "unfavorite" : "favorite",
+          },
+        });
         setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "收藏操作失败，请稍后重试", "收藏"));
         return;
       }
+      emitBehaviorEvent("emoji_favorite_toggle", {
+        collection_id: collectionId || undefined,
+        emoji_id: emoji.id,
+        success: true,
+        metadata: {
+          action: isRemoving ? "unfavorite" : "favorite",
+        },
+      });
       setEmojis((prev) =>
         prev.map((item) =>
           item.id === emoji.id
@@ -608,6 +679,15 @@ export default function CollectionDetailPage() {
         )
       );
     } catch {
+      emitBehaviorEvent("emoji_favorite_toggle", {
+        collection_id: collectionId || undefined,
+        emoji_id: emoji.id,
+        success: false,
+        error_code: "network_error",
+        metadata: {
+          action: isRemoving ? "unfavorite" : "favorite",
+        },
+      });
       setNotice("收藏操作失败，请稍后重试");
     } finally {
       setTogglingEmojiFavorite(null);
@@ -650,7 +730,20 @@ export default function CollectionDetailPage() {
 
   const toggleCollectionLike = async () => {
     if (!collectionId || togglingLike || !collection) return;
-    if (!(await ensureAuthenticated("请先登录再继续点赞"))) return;
+    const action = collection.liked ? "unlike" : "like";
+    if (!(await ensureAuthenticated("请先登录再继续点赞"))) {
+      emitBehaviorEvent("collection_like_toggle", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "unauthorized",
+        metadata: { action },
+      });
+      return;
+    }
+    emitBehaviorEvent("collection_like_toggle", {
+      collection_id: collectionId,
+      metadata: { action },
+    });
     setNotice(null);
     setTogglingLike(true);
     try {
@@ -659,11 +752,23 @@ export default function CollectionDetailPage() {
         method,
       });
       if (res.status === 401) {
+        emitBehaviorEvent("collection_like_toggle", {
+          collection_id: collectionId,
+          success: false,
+          error_code: "unauthorized",
+          metadata: { action },
+        });
         openAuthPrompt("请先登录再继续点赞");
         return;
       }
       if (!res.ok) {
         const apiErr = await parseApiError(res);
+        emitBehaviorEvent("collection_like_toggle", {
+          collection_id: collectionId,
+          success: false,
+          error_code: apiErr.code || `http_${res.status}`,
+          metadata: { action },
+        });
         setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "点赞失败，请稍后重试", "点赞"));
         return;
       }
@@ -675,7 +780,18 @@ export default function CollectionDetailPage() {
         favorited?: boolean;
       };
       updateCollectionActionSummary(data);
+      emitBehaviorEvent("collection_like_toggle", {
+        collection_id: collectionId,
+        success: true,
+        metadata: { action },
+      });
     } catch {
+      emitBehaviorEvent("collection_like_toggle", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "network_error",
+        metadata: { action },
+      });
       setNotice("点赞失败，请稍后重试");
     } finally {
       setTogglingLike(false);
@@ -684,7 +800,20 @@ export default function CollectionDetailPage() {
 
   const toggleCollectionFavorite = async () => {
     if (!collectionId || togglingFavorite || !collection) return;
-    if (!(await ensureAuthenticated("请先登录再继续收藏"))) return;
+    const action = collection.favorited ? "unfavorite" : "favorite";
+    if (!(await ensureAuthenticated("请先登录再继续收藏"))) {
+      emitBehaviorEvent("collection_favorite_toggle", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "unauthorized",
+        metadata: { action },
+      });
+      return;
+    }
+    emitBehaviorEvent("collection_favorite_toggle", {
+      collection_id: collectionId,
+      metadata: { action },
+    });
     setNotice(null);
     setTogglingFavorite(true);
     try {
@@ -693,11 +822,23 @@ export default function CollectionDetailPage() {
         method,
       });
       if (res.status === 401) {
+        emitBehaviorEvent("collection_favorite_toggle", {
+          collection_id: collectionId,
+          success: false,
+          error_code: "unauthorized",
+          metadata: { action },
+        });
         openAuthPrompt("请先登录再继续收藏");
         return;
       }
       if (!res.ok) {
         const apiErr = await parseApiError(res);
+        emitBehaviorEvent("collection_favorite_toggle", {
+          collection_id: collectionId,
+          success: false,
+          error_code: apiErr.code || `http_${res.status}`,
+          metadata: { action },
+        });
         setNotice(apiErr.message || resolveActionNotice(res.status, apiErr.code, "收藏失败，请稍后重试", "收藏"));
         return;
       }
@@ -709,12 +850,52 @@ export default function CollectionDetailPage() {
         favorited?: boolean;
       };
       updateCollectionActionSummary(data);
+      emitBehaviorEvent("collection_favorite_toggle", {
+        collection_id: collectionId,
+        success: true,
+        metadata: { action },
+      });
     } catch {
+      emitBehaviorEvent("collection_favorite_toggle", {
+        collection_id: collectionId,
+        success: false,
+        error_code: "network_error",
+        metadata: { action },
+      });
       setNotice("收藏失败，请稍后重试");
     } finally {
       setTogglingFavorite(false);
     }
   };
+
+  const isShowcaseCollection = Boolean(collection?.is_showcase);
+  const copyrightAuthor = (collection?.copyright_author || "").trim();
+  const copyrightWork = (collection?.copyright_work || "").trim();
+  const copyrightLink = (collection?.copyright_link || "").trim();
+  const hasCopyrightInfo = Boolean(
+    copyrightAuthor || copyrightWork || copyrightLink
+  );
+  const backHref = isShowcaseCollection ? "/showcase" : "/categories";
+
+  if (!loadingDetail && collectionId && !collection) {
+    return (
+      <div className="min-h-screen bg-slate-50/30">
+        <div className="mx-auto flex min-h-[72vh] max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
+          <div className="text-5xl">🫥</div>
+          <h1 className="mt-4 text-2xl font-black text-slate-900">合集不存在或已下架</h1>
+          <p className="mt-2 text-sm font-semibold text-slate-500">
+            你访问的链接可能已失效，去其他页面看看吧～
+          </p>
+          <Link
+            href="/showcase"
+            className="mt-6 inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-5 text-sm font-black text-white transition hover:bg-emerald-600"
+          >
+            返回表情包赏析
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50/30">
@@ -742,7 +923,7 @@ export default function CollectionDetailPage() {
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <Link
-              href="/categories"
+              href={backHref}
               className="group flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-all hover:border-emerald-200 hover:text-emerald-500 hover:shadow-md"
             >
               <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-0.5" />
@@ -757,22 +938,28 @@ export default function CollectionDetailPage() {
               </h1>
             </div>
           </div>
-          <button
-            onClick={handleZipButtonClick}
-            className="group relative flex items-center gap-2 overflow-hidden rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 active:scale-95 disabled:opacity-60"
-            disabled={downloadingZip || loadingZips || !collectionId}
-          >
-            <Download size={16} className="relative z-10" />
-            <span className="relative z-10">
-              {loadingZips
-                ? "加载中..."
-                : downloadingZip
-                ? "生成中..."
-                : zipItems.length > 1
-                ? "下载全部 ZIP"
-                : "下载合集 ZIP"}
-            </span>
-          </button>
+          {!isShowcaseCollection ? (
+            <button
+              onClick={handleZipButtonClick}
+              className="group relative flex items-center gap-2 overflow-hidden rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-slate-200 transition-all hover:bg-emerald-500 hover:shadow-emerald-200 active:scale-95 disabled:opacity-60"
+              disabled={downloadingZip || loadingZips || !collectionId}
+            >
+              <Download size={16} className="relative z-10" />
+              <span className="relative z-10">
+                {loadingZips
+                  ? "加载中..."
+                  : downloadingZip
+                  ? "生成中..."
+                  : zipItems.length > 1
+                  ? "下载全部 ZIP"
+                  : "下载合集 ZIP"}
+              </span>
+            </button>
+          ) : (
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-700">
+              赏析模式：仅展示，不提供下载
+            </div>
+          )}
         </div>
       </div>
 
@@ -834,101 +1021,173 @@ export default function CollectionDetailPage() {
               <span className="text-sm font-black text-slate-900">{collection?.favorite_count || 0}</span>
             </div>
 
-            {/* 下载数展示 */}
-            <div className="flex flex-col items-center gap-2">
-              <div className="flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-slate-50 text-slate-300 border border-slate-100">
-                <Download size={24} />
+            {isShowcaseCollection ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-indigo-50 text-indigo-400 border border-indigo-100">
+                  <Eye size={24} />
+                </div>
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">展示模式</span>
+                <span className="text-sm font-black text-indigo-700">仅赏析</span>
               </div>
-              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">总下载</span>
-              <span className="text-sm font-black text-slate-900">{collection?.download_count || 0}</span>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-slate-50 text-slate-300 border border-slate-100">
+                  <Download size={24} />
+                </div>
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">总下载</span>
+                <span className="text-sm font-black text-slate-900">{collection?.download_count || 0}</span>
+              </div>
+            )}
           </div>
         </div>
+
+        {!isShowcaseCollection && hasCopyrightInfo ? (
+          <div className="mb-10 rounded-2xl border border-slate-200/80 bg-white/80 p-4">
+            <div className="text-[11px] font-bold text-slate-500">版权信息</div>
+            <div className="mt-2 space-y-1 text-sm text-slate-600">
+              <div>图片作者：{copyrightAuthor || "待补充"}</div>
+              <div>原作：{copyrightWork || "待补充"}</div>
+              <div>
+                图片来源/作者主页：
+                {copyrightLink ? (
+                  <a
+                    href={copyrightLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-1 font-semibold text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-900"
+                  >
+                    点击跳转链接
+                  </a>
+                ) : (
+                  "待补充"
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* 表情列表 */}
         <div className="space-y-8">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
-              单张表情下载
-              <span className="text-xs font-bold text-slate-300">/ Single Download</span>
+              {isShowcaseCollection ? "表情内容展示" : "单张表情下载"}
+              <span className="text-xs font-bold text-slate-300">
+                {isShowcaseCollection ? "/ Showcase Display" : "/ Single Download"}
+              </span>
             </h3>
             <div className="rounded-lg bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-400">
               已展示 {emojis.length} / {total}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-            {emojis.map((emoji) => {
-              const preview = emoji.preview_url || emoji.file_url || "";
-              const formatLabel = getEmojiFormatLabel(emoji);
-              const isDownloaded = downloadedEmoji === emoji.id;
-              
-              return (
-                <div
-                  key={emoji.id}
-                  className="group relative flex flex-col rounded-[2rem] border border-slate-100 bg-white p-3 shadow-sm transition-all duration-500 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(15,23,42,0.1)]"
-                >
-                  <div className="relative aspect-square overflow-hidden rounded-2xl bg-slate-50">
-                    {preview ? <FallbackImage url={preview} alt={emoji.title} /> : null}
-                    <div className="absolute left-2 top-2 rounded-lg bg-black/50 px-2 py-1 text-[9px] font-black text-white backdrop-blur-md">
-                      {formatLabel}
+          {!loading && emojis.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-slate-200 bg-white/80 py-16 text-center">
+              <div className="text-4xl">🧸</div>
+              <div className="mt-3 text-base font-black text-slate-800">合集内暂时还没有可展示表情</div>
+              <div className="mt-1 text-sm font-semibold text-slate-500">运营维护后会自动出现在这里</div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+              {emojis.map((emoji) => {
+                const preview = emoji.preview_url || emoji.file_url || "";
+                const formatLabel = getEmojiFormatLabel(emoji);
+                const isDownloaded = downloadedEmoji === emoji.id;
+                const isDownloading = downloadingEmoji === emoji.id;
+                const showDesktopDownloadAction = isDownloading || isDownloaded;
+                
+                return (
+                  <div
+                    key={emoji.id}
+                    className="group relative flex flex-col rounded-[2rem] border border-slate-100/80 bg-white p-2.5 shadow-sm transition-all duration-500 hover:-translate-y-1.5 hover:shadow-[0_20px_40px_-15px_rgba(15,23,42,0.08)]"
+                  >
+                    <div className="relative aspect-square overflow-hidden rounded-[1.5rem] bg-slate-50/50 ring-1 ring-inset ring-slate-100/50">
+                      {preview ? <FallbackImage url={preview} alt={emoji.title} /> : null}
+                      <div className="absolute left-2.5 top-2.5 rounded-full bg-black/30 px-2.5 py-1 text-[9px] font-black tracking-wider text-white backdrop-blur-md">
+                        {formatLabel}
+                      </div>
+                      
+                      {/* 悬浮遮罩 */}
+                      <div className="absolute inset-0 bg-black/[0.03] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                      {!isShowcaseCollection ? (
+                        <button
+                          onClick={() => handleDownloadEmoji(emoji)}
+                          className={`absolute inset-x-2.5 bottom-2.5 hidden h-9 items-center justify-center gap-2 rounded-xl text-[11px] font-black tracking-wide transition-all duration-200 md:flex ${
+                            showDesktopDownloadAction
+                              ? "translate-y-0 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 shadow-sm"
+                              : "translate-y-2 bg-white/85 text-slate-700 ring-1 ring-white/90 shadow-md backdrop-blur-md opacity-0 pointer-events-none group-hover:translate-y-0 group-hover:opacity-100 group-hover:pointer-events-auto group-hover:text-slate-900 group-hover:ring-slate-200 group-focus-within:translate-y-0 group-focus-within:opacity-100 group-focus-within:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100 focus-visible:pointer-events-auto"
+                          } disabled:opacity-60`}
+                          disabled={isDownloading}
+                          aria-label={`下载表情 ${emoji.title || emoji.id}`}
+                        >
+                          {isDownloading ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : isDownloaded ? (
+                            <>
+                              <Check size={14} />
+                              已保存
+                            </>
+                          ) : (
+                            <>
+                              <Download size={14} />
+                              下载
+                            </>
+                          )}
+                        </button>
+                      ) : null}
                     </div>
-                    
-                    {/* 悬浮遮罩 */}
-                    <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                  </div>
 
-                  <div className="mt-4 flex flex-col gap-3">
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {getEmojiSizeLabel(emoji.size_bytes)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleEmojiFavorite(emoji)}
-                        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all ${
-                          emoji.favorited
-                            ? "bg-rose-50 text-rose-500"
-                            : "text-slate-300 hover:bg-slate-50 hover:text-rose-400"
-                        }`}
-                        disabled={togglingEmojiFavorite === emoji.id}
-                      >
-                        {togglingEmojiFavorite === emoji.id ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          <Heart size={14} className={emoji.favorited ? "fill-current" : ""} />
-                        )}
-                      </button>
+                    <div className="mt-3 flex flex-col gap-2.5 px-1 pb-1">
+                      <div className="flex items-center justify-between pl-1">
+                        <span className="text-[11px] font-bold text-slate-400">
+                          {getEmojiSizeLabel(emoji.size_bytes)}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {!isShowcaseCollection ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadEmoji(emoji)}
+                              className={`flex h-8 w-8 items-center justify-center rounded-full transition-all active:scale-90 md:hidden ${
+                                isDownloaded
+                                  ? "bg-emerald-50 text-emerald-600"
+                                  : "bg-slate-50 text-slate-400 hover:bg-emerald-50 hover:text-emerald-500"
+                              }`}
+                              disabled={isDownloading}
+                              aria-label={`下载表情 ${emoji.title || emoji.id}`}
+                            >
+                              {isDownloading ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : isDownloaded ? (
+                                <Check size={14} />
+                              ) : (
+                                <Download size={14} />
+                              )}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => toggleEmojiFavorite(emoji)}
+                            className={`flex h-8 w-8 items-center justify-center rounded-full transition-all active:scale-90 ${
+                              emoji.favorited
+                                ? "bg-rose-50 text-rose-500"
+                                : "bg-slate-50 text-slate-400 hover:bg-rose-50 hover:text-rose-400"
+                            }`}
+                            disabled={togglingEmojiFavorite === emoji.id}
+                            aria-label={`${emoji.favorited ? "取消收藏" : "收藏"}表情 ${emoji.title || emoji.id}`}
+                          >
+                            {togglingEmojiFavorite === emoji.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Heart size={14} className={emoji.favorited ? "fill-current" : ""} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-
-                    <button
-                      onClick={() => handleDownloadEmoji(emoji)}
-                      className={`flex h-9 w-full items-center justify-center gap-2 rounded-xl text-[11px] font-bold transition-all ${
-                        isDownloaded
-                          ? "bg-emerald-50 text-emerald-600"
-                          : "bg-slate-50 text-slate-500 hover:bg-slate-900 hover:text-white hover:shadow-lg hover:shadow-slate-200"
-                      } disabled:opacity-60`}
-                      disabled={downloadingEmoji === emoji.id}
-                    >
-                      {downloadingEmoji === emoji.id ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : isDownloaded ? (
-                        <>
-                          <Check size={14} />
-                          已保存
-                        </>
-                      ) : (
-                        <>
-                          <Download size={14} />
-                          下载
-                        </>
-                      )}
-                    </button>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {canLoadMore ? (
             <div className="mt-16 flex justify-center">
@@ -949,6 +1208,33 @@ export default function CollectionDetailPage() {
             </div>
           ) : null}
         </div>
+
+        {isShowcaseCollection ? (
+          <div className="mt-10 rounded-2xl border border-slate-200/80 bg-white/80 p-4">
+            <div className="text-[11px] font-bold text-slate-500">
+              版权信息
+            </div>
+            <div className="mt-2 space-y-1 text-sm text-slate-600">
+              <div>图片作者：{copyrightAuthor || "未填写"}</div>
+              <div>原作：{copyrightWork || "未填写"}</div>
+              <div>
+                图片来源/作者主页：
+                {copyrightLink ? (
+                  <a
+                    href={copyrightLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-1 font-semibold text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-900"
+                  >
+                    点击跳转链接
+                  </a>
+                ) : (
+                  "未填写"
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="h-20" />

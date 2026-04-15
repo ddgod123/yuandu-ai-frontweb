@@ -1,21 +1,44 @@
 import Link from "next/link";
 import { ChevronRight, Image as ImageIcon } from "lucide-react";
+import { headers } from "next/headers";
 import LatestGrid from "@/components/home/LatestGrid";
 import FeaturedCollections from "@/components/home/FeaturedCollections";
 
 export const dynamic = "force-dynamic";
 
-function resolveApiBase() {
-  const raw = (process.env.NEXT_PUBLIC_API_BASE || "/api").trim();
+function normalizeApiBase(rawBase: string) {
+  const raw = rawBase.trim();
+  if (!raw) return "/api";
   if (/^https?:\/\//i.test(raw)) {
     return raw.replace(/\/+$/, "");
   }
   const normalized = raw.startsWith("/") ? raw : `/${raw}`;
+  return normalized.replace(/\/+$/, "") || "/api";
+}
+
+async function resolveApiBase() {
+  const raw = (process.env.NEXT_PUBLIC_API_BASE || "/api").trim();
+  const normalized = normalizeApiBase(raw);
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  const headerStore = await headers();
+  const host = headerStore.get("x-forwarded-host") || headerStore.get("host");
+  const proto = headerStore.get("x-forwarded-proto") || "https";
+  if (host) {
+    return `${proto}://${host}${normalized}`.replace(/\/+$/, "");
+  }
+
   return `http://127.0.0.1:5050${normalized}`.replace(/\/+$/, "");
 }
 
-const API_BASE = resolveApiBase();
 const FETCH_TIMEOUT_MS = 8000;
+
+function buildApiURL(apiBase: string, path: string) {
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${apiBase}${suffix}`;
+}
 
 type CollectionBrief = {
   id: number;
@@ -37,9 +60,9 @@ type HomeStats = {
   today_new_emojis?: number;
 };
 
-async function fetchHomeStats(): Promise<HomeStats | null> {
+async function fetchHomeStats(apiBase: string): Promise<HomeStats | null> {
   try {
-    const res = await fetch(`${API_BASE}/stats/home`, {
+    const res = await fetch(buildApiURL(apiBase, "/stats/home"), {
       next: { revalidate: 3600 },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -52,7 +75,7 @@ async function fetchHomeStats(): Promise<HomeStats | null> {
   return null;
 }
 
-async function fetchLatestCollections(limit = 12): Promise<CollectionBrief[]> {
+async function fetchLatestCollections(apiBase: string, limit = 12): Promise<CollectionBrief[]> {
   try {
     const params = new URLSearchParams({
       page: "1",
@@ -60,7 +83,7 @@ async function fetchLatestCollections(limit = 12): Promise<CollectionBrief[]> {
       sort: "created_at",
       order: "desc",
     });
-    const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
+    const res = await fetch(buildApiURL(apiBase, `/collections?${params.toString()}`), {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -72,7 +95,7 @@ async function fetchLatestCollections(limit = 12): Promise<CollectionBrief[]> {
   }
 }
 
-async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
+async function fetchFeaturedCollections(apiBase: string, limit = 4): Promise<CollectionBrief[]> {
   try {
     const params = new URLSearchParams({
       page: "1",
@@ -81,7 +104,7 @@ async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
       order: "desc",
       is_featured: "1",
     });
-    const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
+    const res = await fetch(buildApiURL(apiBase, `/collections?${params.toString()}`), {
       cache: "no-store",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -94,7 +117,8 @@ async function fetchFeaturedCollections(limit = 4): Promise<CollectionBrief[]> {
 }
 
 export default async function EmojiRecommendPage() {
-  const homeStats = await fetchHomeStats();
+  const apiBase = await resolveApiBase();
+  const homeStats = await fetchHomeStats(apiBase);
   const todayText =
     typeof homeStats?.today_new_emojis === "number"
       ? homeStats.today_new_emojis.toLocaleString()
@@ -107,8 +131,8 @@ export default async function EmojiRecommendPage() {
     typeof homeStats?.total_emojis === "number"
       ? homeStats.total_emojis.toLocaleString()
       : "--";
-  const latestCollections = await fetchLatestCollections(12);
-  const featuredCollections = await fetchFeaturedCollections(4);
+  const latestCollections = await fetchLatestCollections(apiBase, 12);
+  const featuredCollections = await fetchFeaturedCollections(apiBase, 4);
 
   const latestWithCovers = await Promise.all(
     latestCollections.map(async (item) => ({
@@ -171,7 +195,7 @@ export default async function EmojiRecommendPage() {
                 Featured
               </div>
               <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">推荐合集</h2>
-              <p className="max-w-md text-base font-medium text-slate-400">来自后台勾选“推荐”的合集，首页固定展示最多 4 个。</p>
+              <p className="max-w-md text-base font-medium text-slate-400">甄选优质内容，为你优先推荐热门表情包合集。</p>
             </div>
             <Link href="/categories" className="group mt-6 flex items-center gap-2 text-sm font-bold text-emerald-600 hover:underline md:mt-0">
               查看全部 <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
@@ -186,7 +210,7 @@ export default async function EmojiRecommendPage() {
                 <ImageIcon size={32} />
               </div>
               <p className="text-lg font-bold text-slate-400">当前还没有被标记为推荐的合集</p>
-              <p className="mt-2 text-sm font-medium text-slate-400">可在管理后台编辑合集时勾选“推荐”</p>
+              <p className="mt-2 text-sm font-medium text-slate-400">推荐内容正在更新中，稍后再来看看。</p>
             </div>
           )}
         </div>
@@ -201,7 +225,7 @@ export default async function EmojiRecommendPage() {
               <div className="h-1 w-8 rounded-full bg-blue-500" />
               New Arrival
             </div>
-            <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">最新图片资产</h2>
+            <h2 className="text-4xl font-black tracking-tight text-slate-900 md:text-5xl">最新表情包</h2>
             <p className="mx-auto max-w-2xl text-base font-medium text-slate-400">刚刚入库的精彩内容，抢先一睹为快。</p>
           </div>
 
@@ -218,27 +242,32 @@ export default async function EmojiRecommendPage() {
         </div>
       </section>
 
-      <section className="py-24 lg:py-40">
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="relative overflow-hidden rounded-[4rem] bg-slate-900 px-8 py-24 text-center text-white shadow-[0_40px_100px_-20px_rgba(15,23,42,0.3)]">
-            <div className="absolute left-0 top-0 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/20 blur-[100px]" />
-            <div className="absolute bottom-0 right-0 h-[500px] w-[500px] translate-x-1/2 translate-y-1/2 rounded-full bg-blue-500/20 blur-[100px]" />
+      <section className="py-24 lg:py-32">
+        <div className="mx-auto max-w-5xl px-6">
+          <div className="relative overflow-hidden rounded-[3rem] bg-slate-900 px-8 py-20 text-center shadow-2xl md:px-16 md:py-24">
+            {/* 动态渐变背景 */}
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/40 via-slate-900 to-blue-900/40" />
+            <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-emerald-500/20 blur-[100px]" />
+            <div className="absolute -bottom-24 -left-24 h-96 w-96 rounded-full bg-blue-500/20 blur-[100px]" />
 
-            <div className="relative z-10 space-y-8">
-              <h2 className="text-5xl font-black tracking-tight md:text-7xl">
+            <div className="relative z-10 flex flex-col items-center">
+              <h2 className="text-4xl font-black tracking-tight text-white sm:whitespace-nowrap sm:text-5xl md:text-6xl lg:text-6xl leading-[1.1]">
                 加入档案馆，
-                <br />
-                <span className="text-emerald-400">成为档案官</span>
+                <span className="bg-gradient-to-r from-emerald-300 to-emerald-500 bg-clip-text text-transparent">
+                  成为档案官
+                </span>
               </h2>
-              <p className="mx-auto max-w-2xl text-lg font-medium text-slate-400 md:text-xl">
+
+              <p className="mt-8 max-w-xl text-base font-medium leading-relaxed text-slate-300 md:text-lg">
                 分享你收藏已久的私藏表情包，让全世界看到你的幽默感。
               </p>
-              <div className="flex justify-center pt-4">
+
+              <div className="mt-10">
                 <Link
                   href="/join"
-                  className="group relative flex h-16 items-center justify-center overflow-hidden rounded-2xl bg-emerald-500 px-12 text-lg font-bold text-white shadow-xl shadow-emerald-500/20 transition-all hover:scale-105 hover:bg-emerald-400 active:scale-95"
+                  className="group relative inline-flex h-14 items-center justify-center gap-2 overflow-hidden rounded-full bg-emerald-500 px-10 text-base font-black text-white shadow-[0_0_40px_-10px_rgba(16,185,129,0.5)] transition-all hover:scale-105 hover:bg-emerald-400 hover:shadow-[0_0_60px_-15px_rgba(16,185,129,0.7)] active:scale-95"
                 >
-                  立即加入
+                  <span className="relative z-10">立即加入</span>
                 </Link>
               </div>
             </div>

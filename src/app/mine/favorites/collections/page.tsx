@@ -351,7 +351,7 @@ export default function FavoriteCollectionsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <div className="mx-auto max-w-7xl space-y-8">
       <AuthPromptModal
         open={Boolean(authPromptMessage)}
         message={authPromptMessage || ""}
@@ -393,7 +393,7 @@ export default function FavoriteCollectionsPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {items.map((record) => {
           const collection = record.collection;
           const author =
@@ -405,9 +405,9 @@ export default function FavoriteCollectionsPage() {
             <Link
               key={`${record.collection_id}-${record.created_at}`}
               href={`/collections/${collection.id}`}
-              className="group relative flex flex-col overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white shadow-sm transition-all duration-500 hover:-translate-y-2 hover:border-emerald-100 hover:shadow-2xl hover:shadow-emerald-500/10"
+              className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md"
             >
-              <div className="relative aspect-[4/3] overflow-hidden bg-slate-50">
+              <div className="relative aspect-square overflow-hidden bg-slate-50">
                 {collection.cover_url ? (
                   <FallbackImage
                     key={collection.cover_url}
@@ -420,11 +420,8 @@ export default function FavoriteCollectionsPage() {
                   </div>
                 )}
                 
-                {/* 悬停时的渐变遮罩 */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
-                
                 {/* 收藏按钮 */}
-                <div className="absolute right-4 top-4 z-10">
+                <div className="absolute right-2 top-2 z-10">
                   <button
                     type="button"
                     onClick={(event) => {
@@ -433,57 +430,51 @@ export default function FavoriteCollectionsPage() {
                       handleRemoveFavoriteCollection(collection.id);
                     }}
                     disabled={removingCollection === collection.id}
-                    className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/90 text-rose-500 shadow-lg backdrop-blur-md transition-all hover:scale-110 hover:bg-white active:scale-95 disabled:opacity-60"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-rose-500 shadow backdrop-blur-md transition-all hover:scale-105 hover:bg-white active:scale-95 disabled:opacity-60"
                     aria-label="取消收藏"
                   >
                     {removingCollection === collection.id ? (
-                      <Loader2 size={18} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <Heart size={18} className="fill-current" />
+                      <Heart size={14} className="fill-current" />
                     )}
                   </button>
                 </div>
               </div>
 
-              <div className="flex flex-1 flex-col p-6">
-                <div className="mb-4 space-y-1.5">
-                  <h2 className="line-clamp-1 text-lg font-black text-slate-900 transition-colors group-hover:text-emerald-600">{collection.title}</h2>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
-                      <User size={12} className="text-slate-300" />
-                      {author}
+              <div className="flex flex-1 flex-col p-2.5">
+                <div className="space-y-1.5">
+                  <h2 className="line-clamp-1 text-sm font-black text-slate-900 transition-colors group-hover:text-emerald-600">
+                    {collection.title}
+                  </h2>
+                  <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-400">
+                    <div className="inline-flex min-w-0 items-center gap-1">
+                      <User size={10} className="shrink-0 text-slate-300" />
+                      <span className="truncate">{author}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
-                      <Calendar size={12} className="text-slate-300" />
+                    <div className="inline-flex shrink-0 items-center gap-1">
+                      <Calendar size={10} className="text-slate-300" />
                       {formatFavoriteDate(record.created_at)}
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-auto grid grid-cols-2 gap-4 rounded-[1.5rem] bg-slate-50/50 p-4 transition-colors group-hover:bg-emerald-50/50">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
-                      <Hash size={10} /> 数量
-                    </div>
-                    <div className="text-sm font-black text-slate-900">{collection.file_count || 0}</div>
+                <div className="mt-2.5 grid grid-cols-4 gap-1 text-[10px] font-bold">
+                  <div className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-1.5 py-1 text-slate-600">
+                    <Hash size={10} className="text-slate-400" />
+                    {collection.file_count || 0}
                   </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
-                      <Heart size={10} /> 收藏
-                    </div>
-                    <div className="text-sm font-black text-slate-900">{collection.favorite_count || 0}</div>
+                  <div className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-1.5 py-1 text-amber-700">
+                    <Heart size={10} className="text-amber-500" />
+                    {collection.favorite_count || 0}
                   </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
-                      <Download size={10} /> 下载
-                    </div>
-                    <div className="text-sm font-black text-slate-900">{collection.download_count || 0}</div>
+                  <div className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-1.5 py-1 text-emerald-700">
+                    <Download size={10} className="text-emerald-500" />
+                    {collection.download_count || 0}
                   </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover:text-emerald-600/50">
-                      <ThumbsUp size={10} /> 点赞
-                    </div>
-                    <div className="text-sm font-black text-slate-900">{collection.like_count || 0}</div>
+                  <div className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-1.5 py-1 text-rose-700">
+                    <ThumbsUp size={10} className="text-rose-500" />
+                    {collection.like_count || 0}
                   </div>
                 </div>
               </div>
@@ -491,7 +482,7 @@ export default function FavoriteCollectionsPage() {
           );
         })}
       </div>
-
+ 
       {canLoadMore ? (
         <div className="mt-12 flex justify-center">
           <button

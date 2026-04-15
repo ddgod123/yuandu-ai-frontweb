@@ -306,6 +306,7 @@ export default function CategoriesPage() {
             params.set("page_size", "1");
             params.set("page", "1");
             params.set("category_id", category.id);
+            params.set("is_showcase", "false");
             const res = await fetch(`${API_BASE}/collections?${params.toString()}`, {
               cache: "no-store",
             });
@@ -455,6 +456,7 @@ export default function CategoriesPage() {
         params.set("page_size", String(PAGE_SIZE));
         params.set("page", String(currentPage));
         params.set("preview_count", String(previewCount));
+        params.set("is_showcase", "false");
 
         // 如果选中的是父分类，包含所有子分类
         if (selectedTop !== "all") {

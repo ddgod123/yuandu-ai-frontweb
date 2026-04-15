@@ -34,9 +34,9 @@ type FooterSetting = {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 
 const DEFAULT_SETTING: FooterSetting = {
-  siteName: "表情包档案馆",
+  siteName: "元都AI",
   siteDescription:
-    "致力于收集、整理和分享互联网表情包资源。本站提供合集浏览、下载与收藏功能，服务于个人非商业交流场景。",
+    "面向创作者与团队的 AI 视觉资产生产平台，提供视频转图、视觉内容生成与资产管理能力，让每次创作更快、更稳、更可控。",
   contactEmail: "3909356254@qq.com",
   complaintEmail: "3909356254@qq.com",
   selfMediaLogo: "",
@@ -48,7 +48,7 @@ const DEFAULT_SETTING: FooterSetting = {
   icpLink: "",
   publicSecurityNumber: "公安备案号：待补充",
   publicSecurityLink: "",
-  copyrightText: "表情包档案馆. All rights reserved.",
+  copyrightText: "元都AI · AI视觉资产生产平台. All rights reserved.",
 };
 
 function normalizeSetting(payload: Partial<FooterSetting> | null | undefined): FooterSetting {
