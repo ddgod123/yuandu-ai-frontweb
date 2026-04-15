@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function MineFavoritesIndexPage() {
-  redirect("/mine/favorites/collections");
+  redirect("/mine/favorites/review");
 }

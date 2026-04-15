@@ -12,11 +12,14 @@ export default function MineMenu() {
   const currentPath = pathname || "";
 
   const isWorksRoute = currentPath === "/mine/works" || currentPath.startsWith("/mine/works/");
-  if (isWorksRoute) {
+  const isUploadManageRoute =
+    currentPath === "/mine/favorites/uploads" || currentPath.startsWith("/mine/favorites/uploads/");
+  if (isWorksRoute || isUploadManageRoute) {
     return null;
   }
 
   const menuItems = [
+    { href: "/mine/favorites/review", label: "投稿审核" },
     { href: "/mine/favorites/emojis", label: "收藏表情包" },
     { href: "/mine/favorites/collections", label: "收藏合集" },
   ];

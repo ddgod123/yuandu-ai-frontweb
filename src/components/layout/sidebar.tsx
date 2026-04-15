@@ -1,12 +1,13 @@
 import React from "react";
 import Link from "next/link";
-import { LayoutDashboard, Image as ImageIcon, Library, Settings, Users } from "lucide-react";
+import { LayoutDashboard, Image as ImageIcon, Library, Settings, Users, ShieldCheck } from "lucide-react";
 
 const Sidebar = () => {
   const menuItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/admin" },
     { icon: ImageIcon, label: "Emojis", href: "/admin/emojis" },
     { icon: Library, label: "Collections", href: "/admin/collections" },
+    { icon: ShieldCheck, label: "UGC Reviews", href: "/admin/ugc-reviews" },
     { icon: ImageIcon, label: "XHS Generator", href: "/admin/xhs-generator" },
     { icon: Users, label: "Users", href: "/admin/users" },
     { icon: Settings, label: "Settings", href: "/admin/settings" },

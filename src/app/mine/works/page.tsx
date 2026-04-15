@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
 
 import {
@@ -87,6 +87,13 @@ type WorkCard = {
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp)$/i;
 const PAGE_SIZE = 12;
+const SUPPORTED_WORK_FORMATS = new Set(["gif", "png"]);
+
+function normalizeFormatFilter(raw?: string | null) {
+  const value = (raw || "").trim().toLowerCase();
+  if (SUPPORTED_WORK_FORMATS.has(value)) return value;
+  return "all";
+}
 
 function isImageFile(url?: string | null) {
   if (!url) return false;
@@ -378,10 +385,14 @@ function FallbackImage({ url, alt }: { url: string; alt: string }) {
 
 export default function MineWorksPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryFormat = normalizeFormatFilter(searchParams.get("format"));
+  const isPngPage = queryFormat === "png";
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cards, setCards] = useState<WorkCard[]>([]);
-  const [formatFilter, setFormatFilter] = useState("all");
+  const [formatFilter, setFormatFilter] = useState(() => queryFormat);
   const [sortBy, setSortBy] = useState("time_desc");
   const [currentPage, setCurrentPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
@@ -390,6 +401,35 @@ export default function MineWorksPage() {
   const [selectedJobIDs, setSelectedJobIDs] = useState<number[]>([]);
   const [batchHint, setBatchHint] = useState<string | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
+
+  useEffect(() => {
+    if (formatFilter === queryFormat) return;
+    setFormatFilter(queryFormat);
+    setCurrentPage(1);
+    setSelectedJobIDs([]);
+  }, [formatFilter, queryFormat]);
+
+  const handleFormatFilterChange = useCallback(
+    (nextRawFormat: string) => {
+      const nextFormat = normalizeFormatFilter(nextRawFormat);
+      setFormatFilter(nextFormat);
+      setCurrentPage(1);
+      setSelectedJobIDs([]);
+
+      const nextParams = new URLSearchParams(searchParams.toString());
+      if (nextFormat === "all") {
+        nextParams.delete("format");
+      } else {
+        nextParams.set("format", nextFormat);
+      }
+      nextParams.delete("page");
+
+      const nextQuery = nextParams.toString();
+      const nextURL = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+      router.replace(nextURL, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   const loadWorks = useCallback(async () => {
     setLoading(true);
@@ -609,33 +649,35 @@ export default function MineWorksPage() {
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">文件总数</span>
             <span className="text-base font-black text-slate-800">{totalFiles}</span>
           </div>
-          <div className="px-5 pr-3 flex flex-col justify-center">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">占用容量</span>
-            <span className="text-base font-black text-slate-800">{formatBytes(totalSizeBytes)}</span>
-          </div>
+          {!isPngPage ? (
+            <div className="px-5 pr-3 flex flex-col justify-center">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">占用容量</span>
+              <span className="text-base font-black text-slate-800">{formatBytes(totalSizeBytes)}</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative">
-            <select
-              value={formatFilter}
-              onChange={(event) => {
-                setFormatFilter(event.target.value);
-                setCurrentPage(1);
-                setSelectedJobIDs([]);
-              }}
-              className="appearance-none rounded-xl bg-slate-50/80 pl-4 pr-10 py-2 text-sm font-semibold text-slate-700 outline-none ring-1 ring-inset ring-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all"
-            >
-              <option value="all">全部格式</option>
-              <option value="gif">GIF</option>
-              <option value="png">PNG</option>
-              <option value="jpg" disabled>JPG（待开发）</option>
-              <option value="webp" disabled>WEBP（待开发）</option>
-              <option value="live" disabled>LIVE（待开发）</option>
-              <option value="mp4" disabled>MP4（待开发）</option>
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          </div>
+          {!isPngPage ? (
+            <div className="relative">
+              <select
+                value={formatFilter}
+                onChange={(event) => {
+                  handleFormatFilterChange(event.target.value);
+                }}
+                className="appearance-none rounded-xl bg-slate-50/80 pl-4 pr-10 py-2 text-sm font-semibold text-slate-700 outline-none ring-1 ring-inset ring-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500 cursor-pointer transition-all"
+              >
+                <option value="all">全部格式</option>
+                <option value="gif">GIF</option>
+                <option value="png">PNG</option>
+                <option value="jpg" disabled>JPG（待开发）</option>
+                <option value="webp" disabled>WEBP（待开发）</option>
+                <option value="live" disabled>LIVE（待开发）</option>
+                <option value="mp4" disabled>MP4（待开发）</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          ) : null}
 
           <div className="relative">
             <select

@@ -236,9 +236,9 @@ export default function CardManagePage() {
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="rounded-[2.5rem] border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/40 sm:p-10">
         <div className="flex flex-col gap-6 md:flex-row md:items-center">
-          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-[1.5rem] bg-slate-100 ring-4 ring-white shadow-lg">
+          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full bg-transparent shadow-lg">
             <div className="relative h-full w-full">
-              <Image src={avatarPreview} alt="avatar" fill unoptimized className="object-cover" />
+              <Image src={avatarPreview} alt="avatar" fill unoptimized className="rounded-full object-cover" />
             </div>
           </div>
           <div className="flex-1">

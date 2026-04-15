@@ -47,6 +47,21 @@ type VideoJobItem = {
     point_per_cny?: number;
     cost_markup_multiplier?: number;
   };
+  analysis?: {
+    status?: string;
+    summary_text?: string;
+    highlights?: string[];
+    error?: string;
+    model?: {
+      provider?: string;
+      name?: string;
+      prompt_version?: string;
+      duration_ms?: number;
+      [key: string]: unknown;
+    };
+    updated_at?: string;
+    finished_at?: string;
+  };
 };
 
 type VideoJobListResponse = {
@@ -293,6 +308,21 @@ const AI_MODEL_OPTIONS: AIModelOption[] = [
     description: "由系统根据任务自动选择最合适模型。",
   },
   {
+    value: "qwen3.5-omni-flash",
+    label: "通义千问 Qwen3.5-Omni-Flash",
+    description: "全模态快速版，当前推荐。",
+  },
+  {
+    value: "qwen3.5-omni-plus",
+    label: "通义千问 Qwen3.5-Omni-Plus",
+    description: "全模态高质量版。",
+  },
+  {
+    value: "qwen3.5-plus",
+    label: "通义千问 Qwen3.5-Plus",
+    description: "推理理解更强，适合精读视频与高光抽取。",
+  },
+  {
     value: "qwen-plus",
     label: "通义千问 Qwen-Plus",
     description: "平衡质量与速度。",
@@ -450,6 +480,37 @@ function resolveRequestedFormats(item: VideoJobItem) {
   const fromMetrics = parseFormatList(item.metrics?.output_formats_requested);
   if (fromMetrics.length) return fromMetrics;
   return parseFormatList(item.output_formats);
+}
+
+function resolvePNGModeFromJob(item: VideoJobItem) {
+  const fromOptions = String(item.options?.png_mode || "").trim().toLowerCase();
+  if (fromOptions === "fast_extract" || fromOptions === "smart_llm") {
+    return fromOptions;
+  }
+  const fromMetrics = String(item.metrics?.png_pipeline_mode || "").trim().toLowerCase();
+  if (fromMetrics === "fast_extract" || fromMetrics === "smart_llm") {
+    return fromMetrics;
+  }
+  return "";
+}
+
+function resolvePipelineModeLabel(item: VideoJobItem | null) {
+  if (!item) return "";
+  const format = (resolveRequestedFormats(item)[0] || "").trim().toLowerCase();
+  if (format !== "png") return "";
+  const mode = resolvePNGModeFromJob(item);
+  if (mode !== "fast_extract") {
+    return "智能出图";
+  }
+  let fps = Number(item.options?.fast_extract_fps || 0);
+  if (!Number.isFinite(fps) || fps <= 0) {
+    const interval = Number(item.options?.frame_interval_sec || 0);
+    if (Number.isFinite(interval) && interval > 0) {
+      fps = Math.round(1 / interval);
+    }
+  }
+  const normalizedFPS = fps >= 2 ? 2 : 1;
+  return `普通模式 ${normalizedFPS}fps`;
 }
 
 function executionLaneLabel(raw: unknown) {
@@ -987,6 +1048,41 @@ function buildAI3NaturalReply(metadata?: Record<string, unknown>) {
   return parts.join("。\n");
 }
 
+function buildVideoAnalysisText(analysis?: VideoJobItem["analysis"]) {
+  if (!analysis) return "";
+  const summary = stringFromAny(analysis.summary_text);
+  const highlights = stringListFromAny(analysis.highlights).slice(0, 6);
+  const parts: string[] = [];
+  if (summary) {
+    parts.push(`摘要：${summary}`);
+  }
+  if (highlights.length) {
+    parts.push(`要点：\n${highlights.map((item, idx) => `${idx + 1}. ${item}`).join("\n")}`);
+  }
+  if (!parts.length) return "🧠 视频解析完成。";
+  return `🧠 视频解析完成\n${parts.join("\n\n")}`;
+}
+
+function buildVideoAnalysisMeta(analysis?: VideoJobItem["analysis"]) {
+  if (!analysis || typeof analysis !== "object") return "";
+  const model = (analysis.model || {}) as Record<string, unknown>;
+  const provider = stringFromAny(model.provider);
+  const name = stringFromAny(model.name);
+  const promptVersion = stringFromAny(model.prompt_version);
+  const durationMs = Number(model.duration_ms ?? 0);
+  const parts: string[] = [];
+  if (provider || name) {
+    parts.push(`模型：${[provider, name].filter(Boolean).join("/")}`);
+  }
+  if (promptVersion) {
+    parts.push(`Prompt：${promptVersion}`);
+  }
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    parts.push(`耗时：${Math.round(durationMs)}ms`);
+  }
+  return parts.join(" · ");
+}
+
 function presentEventMessage(event: VideoJobEventItem): EventPresentation {
   const raw = (event.message || "").trim();
   const normalized = raw.toLowerCase();
@@ -1095,6 +1191,65 @@ function presentEventMessage(event: VideoJobEventItem): EventPresentation {
   if (normalized === "video job started") {
     return { role: "assistant" as const, name: "系统", text: "任务已进入处理队列，正在分配算力节点...", meta: "" };
   }
+  if (normalized === "png fast extract mode enabled") {
+    const fps = Number(metadata?.fast_extract_fps || 0);
+    const maxStatic = Number(metadata?.max_static || 0);
+    return {
+      role: "assistant" as const,
+      name: "快速切帧",
+      text: `已切换普通模式（按秒切帧）${fps > 0 ? `，当前 ${fps}fps` : ""}${maxStatic > 0 ? `，最多输出 ${maxStatic} 张` : ""}。`,
+      meta: summarizeMetadata(metadata),
+      rawMetadata: metadata,
+    };
+  }
+  if (normalized === "fast extraction started") {
+    const fps = Number(metadata?.fast_extract_fps || 0);
+    return {
+      role: "assistant" as const,
+      name: "快速切帧",
+      text: `开始按帧提取${fps > 0 ? `（${fps}fps）` : ""}，并执行基础清晰度过滤。`,
+      meta: summarizeMetadata(metadata),
+      rawMetadata: metadata,
+    };
+  }
+  if (normalized === "fast frame extraction completed") {
+    const frames = Number(metadata?.frames || 0);
+    const blurReject = Number(metadata?.quality_blur_reject || 0);
+    const dupReject = Number(metadata?.quality_dup_reject || 0);
+    return {
+      role: "assistant" as const,
+      name: "快速切帧",
+      text:
+        frames > 0
+          ? `按帧提取完成，保留 ${frames} 张候选图。`
+          : "按帧提取完成。",
+      meta: `模糊过滤 ${blurReject} · 重复过滤 ${dupReject}`,
+      rawMetadata: metadata,
+    };
+  }
+  if (normalized.endsWith("output render pipeline started")) {
+    return {
+      role: "assistant" as const,
+      name: "系统",
+      text: "正在整理结果并上传到作品库...",
+      meta: summarizeMetadata(metadata),
+      rawMetadata: metadata,
+    };
+  }
+  if (normalized === "video semantic reading completed") {
+    const preview = stringFromAny(metadata?.summary_preview);
+    const highlightCount = Number(metadata?.highlight_count ?? 0);
+    const tail: string[] = [];
+    if (preview) tail.push(`摘要预览：${preview}`);
+    if (Number.isFinite(highlightCount) && highlightCount > 0) tail.push(`要点 ${highlightCount} 条`);
+    return {
+      role: "assistant" as const,
+      name: "解读AI",
+      text: tail.length ? `🧠 视频语义解读已完成。\n${tail.join("；")}` : "🧠 视频语义解读已完成。",
+      meta: summarizeMetadata(metadata),
+      rawMetadata: metadata,
+    };
+  }
 
   // Hide noisy worker/system logs from the main timeline unless they are errors
   if (normalizeEventLevel(event.level) === "error") {
@@ -1169,6 +1324,8 @@ export default function CreatePage() {
 
   const [selectedFormat, setSelectedFormat] = useState<string>("png");
   const [selectedAIModel, setSelectedAIModel] = useState<string>("auto");
+  const [selectedPNGMode, setSelectedPNGMode] = useState<"smart_llm" | "fast_extract">("smart_llm");
+  const [fastExtractFPS, setFastExtractFPS] = useState<1 | 2>(1);
   const [promptText, setPromptText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
@@ -1205,6 +1362,7 @@ export default function CreatePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const eventCursorRef = useRef<Record<number, number>>({});
   const seenEventRef = useRef<Set<string>>(new Set());
+  const analysisAnnouncementRef = useRef<Record<number, string>>({});
   const announcedActiveJobRef = useRef<number | null>(null);
 
   const activeJob = useMemo(() => jobs.find((item) => item.id === activeJobID) || null, [jobs, activeJobID]);
@@ -1253,10 +1411,6 @@ export default function CreatePage() {
     [activeJob]
   );
 
-  const hasRunningJob = useMemo(
-    () => jobs.some((item) => item.status === "queued" || item.status === "running"),
-    [jobs]
-  );
   useEffect(() => {
     setActivePreviewIndex(0);
   }, [activeJobID]);
@@ -1319,6 +1473,7 @@ export default function CreatePage() {
     setJobResultMap((prev) => removeMapKey(prev, jobID));
     setJobResultErrorMap((prev) => removeMapKey(prev, jobID));
     delete eventCursorRef.current[jobID];
+    delete analysisAnnouncementRef.current[jobID];
   }, []);
 
   const checkAuth = useCallback(async () => {
@@ -1534,9 +1689,42 @@ export default function CreatePage() {
         return null;
       }
       syncOneJob(job);
+      const analysisStatus = String(job?.analysis?.status || "").trim().toLowerCase();
+      const analysisSignature = [
+        analysisStatus,
+        String(job?.analysis?.updated_at || job?.analysis?.finished_at || "").trim(),
+        String(job?.analysis?.summary_text || "").trim(),
+        stringListFromAny(job?.analysis?.highlights).join("|"),
+        String(job?.analysis?.error || "").trim(),
+      ].join("::");
+      if (analysisStatus && analysisAnnouncementRef.current[jobID] !== analysisSignature) {
+        analysisAnnouncementRef.current[jobID] = analysisSignature;
+        if (analysisStatus === "done") {
+          appendTimeline({
+            role: "assistant",
+            name: "解读AI",
+            level: "success",
+            text: buildVideoAnalysisText(job.analysis),
+            meta: buildVideoAnalysisMeta(job.analysis) || undefined,
+            stage: "video_reading",
+            jobId: jobID,
+          });
+        } else if (analysisStatus === "failed") {
+          appendTimeline({
+            role: "assistant",
+            name: "解读AI",
+            level: "warn",
+            text: stringFromAny(job?.analysis?.error)
+              ? `视频解析失败：${stringFromAny(job?.analysis?.error)}`
+              : "视频解析失败，请稍后重试。",
+            stage: "video_reading",
+            jobId: jobID,
+          });
+        }
+      }
       return job;
     },
-    [pruneRemovedJob, syncOneJob]
+    [appendTimeline, pruneRemovedJob, syncOneJob]
   );
 
   const loadJobResult = useCallback(
@@ -1995,6 +2183,10 @@ export default function CreatePage() {
     const modelLabel = selectedModelOption?.label || selectedAIModel;
     const advancedSceneForPayload = normalizedFormat === "png" ? advancedScene : "default";
     const advancedFocusForPayload = normalizedFormat === "png" ? advancedVisualFocus : [];
+    const pngModeForPayload = normalizedFormat === "png" ? selectedPNGMode : "smart_llm";
+    const flowModeForPayload =
+      normalizedFormat === "png" && pngModeForPayload === "fast_extract" ? "direct" : "ai1_confirm";
+    const isFastExtractMode = normalizedFormat === "png" && pngModeForPayload === "fast_extract";
 
     setSubmitting(true);
     setGlobalError(null);
@@ -2003,8 +2195,10 @@ export default function CreatePage() {
       role: "user",
       level: "info",
       text: userPrompt || `请帮我把这个视频转换为 ${normalizedFormat.toUpperCase()} 图片。`,
-      meta: `格式：${normalizedFormat.toUpperCase()} · 模型：${modelLabel} · 场景：${
-        normalizedFormat === "png" ? advancedSceneLabel : "研发中"
+      meta: `格式：${normalizedFormat.toUpperCase()}${
+        !isFastExtractMode ? ` · 模型：${modelLabel}` : ""
+      }${normalizedFormat === "png" ? ` · 模式：${isFastExtractMode ? `普通模式(${fastExtractFPS}fps)` : "智能出图"}` : ""}${
+        normalizedFormat === "png" && !isFastExtractMode ? ` · 场景：${advancedSceneLabel}` : ""
       } · 文件：${file.name}`,
     });
 
@@ -2170,18 +2364,24 @@ export default function CreatePage() {
           fileName: file.name || "",
         }),
         prompt: userPrompt,
-        ai_model: selectedAIModel,
-        flow_mode: "ai1_confirm",
+        flow_mode: flowModeForPayload,
         source_video_key: uploadKey,
         auto_highlight: true,
         output_formats: [normalizedFormat],
-        advanced_options: {
+      };
+      if (!isFastExtractMode) {
+        payload.ai_model = selectedAIModel;
+        payload.advanced_options = {
           scene: advancedSceneForPayload,
           visual_focus: advancedFocusForPayload,
-          enhance_super_resolution: true, // 临时硬编码开启超分测试
-          enhance_face: true, // 临时硬编码开启人脸修复测试
-        },
-      };
+        };
+      }
+      if (normalizedFormat === "png") {
+        payload.png_mode = pngModeForPayload;
+        if (pngModeForPayload === "fast_extract") {
+          payload.fast_extract_fps = fastExtractFPS;
+        }
+      }
 
       const createRes = await fetchWithAuthRetry(`${API_BASE}/video-jobs`, {
         method: "POST",
@@ -2206,7 +2406,7 @@ export default function CreatePage() {
       patchTimeline(step4, {
         level: "success",
         text: `步骤 4/4：任务 #${created.id} 创建成功`,
-        meta: `格式：${normalizedFormat.toUpperCase()} · 模型：${modelLabel}${laneLabel ? ` · ${laneLabel}` : ""}`,
+        meta: `格式：${normalizedFormat.toUpperCase()}${!isFastExtractMode ? ` · 模型：${modelLabel}` : ` · 普通模式(${fastExtractFPS}fps)`}${laneLabel ? ` · ${laneLabel}` : ""}`,
         jobId: created.id,
       });
 
@@ -2214,7 +2414,10 @@ export default function CreatePage() {
         role: "system",
         name: "系统",
         level: "info",
-        text: `任务已进入分步模式：先执行 AI1 并等待你的确认，确认后再继续 AI2/Worker/AI3。${laneLabel ? `当前走 ${laneLabel}。` : ""}`,
+        text:
+          flowModeForPayload === "ai1_confirm"
+            ? `任务已进入分步模式：先执行 AI1 并等待你的确认，确认后再继续 AI2/Worker/AI3。${laneLabel ? `当前走 ${laneLabel}。` : ""}`
+            : `任务已进入普通模式：按秒快速切帧并并行执行视频阅读理解。${laneLabel ? `当前走 ${laneLabel}。` : ""}`,
         jobId: created.id,
       });
 
@@ -2253,6 +2456,8 @@ export default function CreatePage() {
     patchTimeline,
     promptText,
     selectedAIModel,
+    selectedPNGMode,
+    fastExtractFPS,
     selectedFile,
     selectedFormat,
     selectedModelOption,
@@ -2307,6 +2512,13 @@ export default function CreatePage() {
   }, [advancedScene, advancedSceneOptions]);
 
   useEffect(() => {
+    if (selectedFormat.trim().toLowerCase() !== "png") return;
+    if (selectedPNGMode !== "fast_extract") return;
+    if (!showAdvancedOptions) return;
+    setShowAdvancedOptions(false);
+  }, [selectedFormat, selectedPNGMode, showAdvancedOptions]);
+
+  useEffect(() => {
     if (previewEmptyState) return;
     if (todayJobs.length === 0) {
       if (activeJobID && !todayJobs.some((item) => item.id === activeJobID)) {
@@ -2317,16 +2529,6 @@ export default function CreatePage() {
     if (activeJobID && todayJobs.some((item) => item.id === activeJobID)) return;
     setActiveJobID(todayJobs[0].id);
   }, [todayJobs, activeJobID, previewEmptyState]);
-
-  useEffect(() => {
-    if (!isAuthed || !hasRunningJob) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void loadJobs();
-      }
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [hasRunningJob, isAuthed, loadJobs]);
 
   useEffect(() => {
     if (!isAuthed || !activeJobID) return;
@@ -2342,23 +2544,7 @@ export default function CreatePage() {
       void loadJobEvents(activeJobID, true);
     }
 
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled) return;
-      await loadJobDetail(activeJobID);
-    };
-
-    void poll();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void poll();
-      }
-    }, 3200);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    void loadJobDetail(activeJobID);
   }, [activeJobID, appendTimeline, isAuthed, loadJobDetail, loadJobEvents]);
 
   useEffect(() => {
@@ -2405,9 +2591,15 @@ export default function CreatePage() {
       if (item.level === "error") return true;
       if (item.role === "user") return true;
       if (item.ai1Card || item.ai2Card || item.ai3Card) return true;
+      if ((item.stage || "").trim().toLowerCase() === "video_reading") return true;
       if (item.role !== "assistant") return false;
       return (
         item.text.includes("任务处理完成") ||
+        item.text.includes("按帧提取") ||
+        item.text.includes("普通模式") ||
+        item.text.includes("整理结果并上传") ||
+        item.text.includes("视频解析") ||
+        item.text.includes("视频语义解读") ||
         item.text.includes("等待") ||
         item.text.includes("确认") ||
         item.text.includes("已切换到任务")
@@ -2519,6 +2711,7 @@ export default function CreatePage() {
               openTaskInitDrawer();
             }}
             resolveRequestedFormats={(job) => resolveRequestedFormats(job as VideoJobItem)}
+            resolvePipelineModeLabel={(job) => resolvePipelineModeLabel(job as VideoJobItem)}
             resolvePreviewURL={(job) => resolveJobPreviewURL(job as VideoJobItem)}
             formatTime={formatTime}
           />
@@ -2548,6 +2741,7 @@ export default function CreatePage() {
             }}
             downloadingOriginal={downloadingOriginal}
             resolveResultImageURL={resolveResultImageURL}
+            resolvePipelineModeLabel={(job) => resolvePipelineModeLabel(job as VideoJobItem | null)}
           />
         </div>
 
@@ -2582,6 +2776,10 @@ export default function CreatePage() {
         selectedAIModel={selectedAIModel}
         modelOptions={AI_MODEL_OPTIONS}
         onChangeModel={setSelectedAIModel}
+        selectedPNGMode={selectedPNGMode}
+        onChangePNGMode={setSelectedPNGMode}
+        fastExtractFPS={fastExtractFPS}
+        onChangeFastExtractFPS={setFastExtractFPS}
         fileInputRef={fileInputRef}
         selectedFileName={selectedFile?.name || ""}
         submitting={submitting}

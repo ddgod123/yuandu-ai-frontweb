@@ -11,6 +11,7 @@ type IPItem = {
   name: string;
   slug: string;
   cover_url?: string;
+  cover_thumb_url?: string;
   description?: string;
 };
 
@@ -159,13 +160,18 @@ export default async function Page({
   params,
   searchParams,
 }: {
-  params: { id: string };
-  searchParams: { page?: string; sort?: string };
+  params: Promise<{ id: string }> | { id: string };
+  searchParams: Promise<{ page?: string; sort?: string }> | { page?: string; sort?: string };
 }) {
-  const currentPage = Math.max(1, Number.parseInt(searchParams.page || "1", 10) || 1);
-  const sortKey = searchParams.sort === "count" ? "count" : "new";
-  const ip = await fetchIP(params.id);
-  const { items: collections, total } = await fetchCollections(params.id, currentPage, sortKey);
+  const resolvedParams = await Promise.resolve(params);
+  const resolvedSearchParams = await Promise.resolve(searchParams);
+  const ipID = String(resolvedParams?.id || "");
+  const currentPage = Math.max(1, Number.parseInt(resolvedSearchParams?.page || "1", 10) || 1);
+  const sortKey = resolvedSearchParams?.sort === "count" ? "count" : "new";
+  const ip = ipID ? await fetchIP(ipID) : null;
+  const { items: collections, total } = ipID
+    ? await fetchCollections(ipID, currentPage, sortKey)
+    : { items: [], total: 0 };
   const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 0;
   const pagination = buildPagination(currentPage, totalPages);
 
@@ -228,70 +234,86 @@ export default async function Page({
   return (
     <main className="min-h-screen bg-white">
       <section className="relative overflow-hidden bg-gradient-to-b from-emerald-50/40 to-white py-16">
-        <div className="mx-auto max-w-6xl px-6">
-          <Link href="/trending" className="text-xs font-semibold text-emerald-600 hover:underline">
+        <div className="mx-auto max-w-7xl px-6">
+          <Link href="/trending" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-emerald-600 transition-colors">
             ← 返回 IP 馆
           </Link>
-          <div className="mt-6 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-col gap-6 md:flex-row md:items-center">
-              <div className="h-28 w-28 overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-sm">
-                {ip?.cover_url ? (
-                  <div className="relative h-full w-full">
-                    <SmartImage
-                      url={ip.cover_url}
-                      alt={ip.name}
-                      className="object-cover"
-                      loading="lazy"
-                    />
-                  </div>
+          <div className="mt-8 flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+              <div className="relative aspect-[16/10] w-44 shrink-0 overflow-hidden rounded-[2.5rem] bg-slate-50 shadow-sm ring-1 ring-inset ring-slate-100/50 sm:w-56">
+                {ip?.cover_thumb_url || ip?.cover_url ? (
+                  <SmartImage
+                    url={ip.cover_thumb_url || ip.cover_url}
+                    alt={ip.name}
+                    className="object-cover"
+                    loading="lazy"
+                  />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center text-3xl font-black text-slate-300">
-                    {ip?.name?.slice(0, 1) || "IP"}
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+                    <span className="text-5xl font-black text-slate-200/60">
+                      {ip?.name?.slice(0, 1).toUpperCase() || "IP"}
+                    </span>
                   </div>
                 )}
               </div>
-              <div>
-                <div className="text-3xl font-black text-slate-900">{ip?.name || "IP 专题"}</div>
-                <div className="mt-2 text-sm text-slate-500">{ip?.description || "暂无简介"}</div>
-                <div className="mt-3 text-xs font-semibold text-slate-400">
-                  共 {total} 个合集
+              <div className="flex flex-col justify-center">
+                <div className="flex items-center gap-3">
+                  <h1 className="text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">{ip?.name || "未命名 IP"}</h1>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    {ip?.slug || "TRENDING IP"}
+                  </span>
+                </div>
+                <p className="mt-3 max-w-xl text-sm font-medium leading-relaxed text-slate-500">
+                  {ip?.description || "该 IP 暂无详细描述，正在完善中..."}
+                </p>
+                <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  共收录 <span className="text-slate-700">{total}</span> 个相关合集
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold">
+            
+            <div className="flex shrink-0 items-center gap-2 rounded-full bg-slate-50 p-1 ring-1 ring-slate-100">
               <Link
-                href={`/trending/${params.id}?sort=new&page=1`}
-                className={`rounded-full px-4 py-2 transition ${
-                  sortKey === "new" ? "bg-emerald-500 text-white" : "bg-white text-slate-500 border border-slate-200"
+                href={`/trending/${ipID}?sort=new&page=1`}
+                className={`rounded-full px-5 py-2 text-xs font-bold transition-all ${
+                  sortKey === "new" 
+                    ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700"
                 }`}
               >
-                最新
+                最新收录
               </Link>
               <Link
-                href={`/trending/${params.id}?sort=count&page=1`}
-                className={`rounded-full px-4 py-2 transition ${
-                  sortKey === "count" ? "bg-emerald-500 text-white" : "bg-white text-slate-500 border border-slate-200"
+                href={`/trending/${ipID}?sort=count&page=1`}
+                className={`rounded-full px-5 py-2 text-xs font-bold transition-all ${
+                  sortKey === "count" 
+                    ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/50" 
+                    : "text-slate-500 hover:text-slate-700"
                 }`}
               >
-                数量
+                表情最多
               </Link>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="py-10">
-        <div className="mx-auto max-w-6xl px-6">
+      <section className="pb-24 pt-8">
+        <div className="mx-auto max-w-7xl px-6">
           {cards.length === 0 ? (
-            <div className="py-20 text-center text-sm text-slate-400">暂无合集中该 IP 的数据</div>
+            <div className="rounded-[3rem] border-2 border-dashed border-slate-100 bg-slate-50/50 py-32 text-center">
+              <p className="text-lg font-bold text-slate-400">暂无相关合集</p>
+              <p className="mt-2 text-sm font-medium text-slate-400">该 IP 下还没有收录任何表情包合集。</p>
+            </div>
           ) : (
             <>
               <CollectionPreviewGrid collections={cards} loading={false} />
               {totalPages > 1 && (
-                <div className="mt-12 flex flex-wrap items-center justify-center gap-2 text-slate-500">
+                <div className="mt-16 flex flex-wrap items-center justify-center gap-3 text-slate-500">
                   <Link
-                    href={`/trending/${params.id}?sort=${sortKey}&page=${Math.max(1, currentPage - 1)}`}
-                    className={`h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 hover:bg-slate-50 ${
+                    href={`/trending/${ipID}?sort=${sortKey}&page=${Math.max(1, currentPage - 1)}`}
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 transition-all hover:border-emerald-200 hover:text-emerald-600 active:scale-90 ${
                       currentPage === 1 ? "pointer-events-none opacity-40" : ""
                     }`}
                   >
@@ -303,11 +325,11 @@ export default async function Page({
                     ) : (
                       <Link
                         key={item}
-                        href={`/trending/${params.id}?sort=${sortKey}&page=${item}`}
-                        className={`h-10 w-10 rounded-full flex items-center justify-center font-bold ${
+                        href={`/trending/${ipID}?sort=${sortKey}&page=${item}`}
+                        className={`flex h-10 w-10 items-center justify-center rounded-full font-bold transition-all active:scale-90 ${
                           currentPage === item
-                            ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
-                            : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                            ? "bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]"
+                            : "border border-slate-200 text-slate-600 hover:border-emerald-200 hover:text-emerald-600"
                         }`}
                       >
                         {item}
@@ -315,14 +337,13 @@ export default async function Page({
                     )
                   )}
                   <Link
-                    href={`/trending/${params.id}?sort=${sortKey}&page=${Math.min(totalPages, currentPage + 1)}`}
-                    className={`h-10 w-10 flex items-center justify-center rounded-full border border-slate-200 hover:bg-slate-50 ${
+                    href={`/trending/${ipID}?sort=${sortKey}&page=${Math.min(totalPages, currentPage + 1)}`}
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 transition-all hover:border-emerald-200 hover:text-emerald-600 active:scale-90 ${
                       currentPage === totalPages ? "pointer-events-none opacity-40" : ""
                     }`}
                   >
                     ›
                   </Link>
-                  <span className="ml-2 text-sm">共 {totalPages} 页</span>
                 </div>
               )}
             </>

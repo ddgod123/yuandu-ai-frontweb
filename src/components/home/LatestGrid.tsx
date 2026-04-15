@@ -26,50 +26,43 @@ export default function LatestGrid({
     Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
 
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
       {items.map((item) => (
         <Link
           href={`/collections/${item.id}`}
           key={item.id}
-          className="group relative block overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
+          className="group relative flex flex-col transition-all duration-500 hover:-translate-y-1.5"
         >
-          <div className="relative aspect-square w-full overflow-hidden bg-slate-100">
+          <div className="relative aspect-square w-full overflow-hidden rounded-[2rem] bg-slate-50 ring-1 ring-inset ring-slate-100/50 transition-all duration-500 group-hover:shadow-[0_20px_40px_-15px_rgba(15,23,42,0.1)] group-hover:ring-emerald-100">
             <SmartImage
               url={item.cover || fallbackCover}
               alt={item.title}
-              className="object-cover transition-transform duration-500 group-hover:scale-105"
+              className="object-cover transition-transform duration-700 group-hover:scale-110"
               loading="lazy"
               fallbackClassName="h-full w-full bg-slate-100"
             />
-            <div className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full border border-white/60 bg-white/85 px-2 py-1 text-[10px] font-extrabold text-emerald-700 backdrop-blur-md">
-              <Sparkles size={11} />
-              新到馆
+            
+            {/* 顶部标签 */}
+            <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-black tracking-wider text-emerald-600 backdrop-blur-md shadow-sm">
+              <Sparkles size={10} className="fill-emerald-500" />
+              NEW
+            </div>
+
+            {/* 底部数量悬浮显示 */}
+            <div className="absolute bottom-3 right-3 translate-y-2 opacity-0 transition-all duration-500 group-hover:translate-y-0 group-hover:opacity-100">
+              <div className="flex items-center gap-1 rounded-lg bg-black/40 px-2 py-1 text-[9px] font-black text-white backdrop-blur-md">
+                <Layers size={10} />
+                {normalizeCount(item.file_count)} P
+              </div>
             </div>
           </div>
 
-          <div className="space-y-3 p-3.5">
-            <h3 className="line-clamp-2 min-h-[2.5rem] text-sm font-black leading-tight text-slate-900 transition-colors group-hover:text-emerald-600">
+          <div className="mt-4 px-1">
+            <h3 className="line-clamp-1 text-sm font-black tracking-tight text-slate-800 transition-colors group-hover:text-emerald-600">
               {item.title}
             </h3>
-
-            <div className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
-              <Layers size={11} />
-              {normalizeCount(item.file_count)}
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5 border-t border-slate-100 pt-2">
-              <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
-                <Heart size={11} className="text-rose-400" />
-                {normalizeCount(item.like_count)}
-              </div>
-              <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
-                <Bookmark size={11} className="text-amber-400" />
-                {normalizeCount(item.favorite_count)}
-              </div>
-              <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
-                <Download size={11} className="text-sky-400" />
-                {normalizeCount(item.download_count)}
-              </div>
+            <div className="mt-1 flex items-center gap-2 text-[10px] font-bold text-slate-400">
+              <span>{normalizeCount(item.file_count)} 张表情</span>
             </div>
           </div>
         </Link>

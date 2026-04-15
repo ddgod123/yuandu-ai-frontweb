@@ -18,6 +18,10 @@ type TaskInitDrawerProps = {
   selectedAIModel: string;
   modelOptions: WorkbenchModelOption[];
   onChangeModel: (value: string) => void;
+  selectedPNGMode: "smart_llm" | "fast_extract";
+  onChangePNGMode: (value: "smart_llm" | "fast_extract") => void;
+  fastExtractFPS: 1 | 2;
+  onChangeFastExtractFPS: (value: 1 | 2) => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
   selectedFileName: string;
   submitting: boolean;
@@ -48,6 +52,10 @@ export function TaskInitDrawer({
   selectedAIModel,
   modelOptions,
   onChangeModel,
+  selectedPNGMode,
+  onChangePNGMode,
+  fastExtractFPS,
+  onChangeFastExtractFPS,
   fileInputRef,
   selectedFileName,
   submitting,
@@ -83,6 +91,7 @@ export function TaskInitDrawer({
 
   const format = selectedFormat.trim().toLowerCase();
   const advancedSupported = format === "png";
+  const isPNGFastMode = format === "png" && selectedPNGMode === "fast_extract";
 
   return (
     <>
@@ -139,6 +148,7 @@ export function TaskInitDrawer({
               <select
                 value={selectedAIModel}
                 onChange={(event) => onChangeModel(event.target.value)}
+                disabled={submitting || isPNGFastMode}
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:border-emerald-500 focus:bg-white focus:ring-1 focus:ring-emerald-500"
               >
                 {modelOptions.map((item) => (
@@ -147,8 +157,56 @@ export function TaskInitDrawer({
                   </option>
                 ))}
               </select>
+              {isPNGFastMode ? (
+                <p className="mt-1 text-[11px] font-medium text-slate-500">普通模式会跳过 AI1~AI3，模型设置不生效。</p>
+              ) : null}
             </label>
           </div>
+
+          {format === "png" ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="text-sm font-semibold text-slate-700">PNG 出图模式</div>
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => onChangePNGMode("smart_llm")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                    selectedPNGMode === "smart_llm"
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                  }`}
+                >
+                  智能出图（AI1→AI3）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangePNGMode("fast_extract")}
+                  className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+                    selectedPNGMode === "fast_extract"
+                      ? "border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                  }`}
+                >
+                  普通模式（按秒切帧）
+                </button>
+              </div>
+              {selectedPNGMode === "fast_extract" ? (
+                <div className="mt-3">
+                  <label className="text-xs font-semibold text-slate-600">
+                    切帧频率
+                    <select
+                      value={String(fastExtractFPS)}
+                      onChange={(event) => onChangeFastExtractFPS(event.target.value === "2" ? 2 : 1)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                    >
+                      <option value="1">1 秒 1 帧</option>
+                      <option value="2">1 秒 2 帧</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div>
             <label className="mb-2 block text-sm font-semibold text-slate-700">视频源文件</label>
@@ -182,8 +240,15 @@ export function TaskInitDrawer({
           <div>
             <button
               type="button"
-              onClick={onToggleAdvancedOptions}
-              className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+              onClick={() => {
+                if (isPNGFastMode) return;
+                onToggleAdvancedOptions();
+              }}
+              className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold shadow-sm transition-colors ${
+                isPNGFastMode
+                  ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
             >
               <div className="flex items-center gap-2">
                 <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -195,9 +260,12 @@ export function TaskInitDrawer({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
+            {isPNGFastMode ? (
+              <p className="mt-2 text-[11px] font-medium text-slate-500">普通模式按秒切帧，场景/聚焦等 AI 高级策略暂不参与。</p>
+            ) : null}
             {showAdvancedOptions ? (
               <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                {advancedSupported ? (
+                {!isPNGFastMode && advancedSupported ? (
                   <>
                     <div className="text-xs font-bold text-slate-700">场景与用途</div>
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -239,7 +307,11 @@ export function TaskInitDrawer({
                     </div>
                   </>
                 ) : (
-                  <div className="text-[12px] text-slate-600">{selectedFormat.toUpperCase()} 高级处理策略研发中，当前仅 PNG 可配置。</div>
+                  <div className="text-[12px] text-slate-600">
+                    {isPNGFastMode
+                      ? "普通模式已关闭 AI 高级策略，请切换到“智能出图（AI1→AI3）”后配置。"
+                      : `${selectedFormat.toUpperCase()} 高级处理策略研发中，当前仅 PNG 可配置。`}
+                  </div>
                 )}
               </div>
             ) : null}

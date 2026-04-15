@@ -44,6 +44,8 @@ export default function Navbar() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [emojiMenuOpenPath, setEmojiMenuOpenPath] = useState<string | null>(null);
+  const [resourceMenuOpenPath, setResourceMenuOpenPath] = useState<string | null>(null);
+  const [aiToolsMenuOpenPath, setAIToolsMenuOpenPath] = useState<string | null>(null);
   const [user, setUser] = useState<UserInfo>({
     name: "表情用户",
     avatar: buildDefaultAvatar("表情用户"),
@@ -163,54 +165,94 @@ export default function Navbar() {
   const navItems = [
     {
       label: "首页",
-      href: "/",
-      match: (path: string) => path === "/",
-    },
-    {
-      label: "视频转图片",
-      href: "/create",
-      match: (path: string) => path === "/create" || path.startsWith("/create/"),
-    },
-    {
-      label: "我的作品",
-      href: "/mine/works",
-      match: (path: string) => path === "/mine/works" || path.startsWith("/mine/works/"),
+      href: "/emoji-recommend",
+      match: (path: string) => path === "/emoji-recommend" || path.startsWith("/emoji-recommend/"),
     },
     {
       label: "我的",
       href: "/mine",
       match: (path: string) =>
-        path === "/mine" || path.startsWith("/mine/favorites") || path.startsWith("/mine/my-emojis"),
+        path === "/mine" ||
+        path.startsWith("/mine/favorites/review") ||
+        path.startsWith("/mine/favorites/emojis") ||
+        path.startsWith("/mine/favorites/collections") ||
+        path.startsWith("/mine/my-emojis"),
     },
   ];
+  const subscriptionNav = {
+    label: "订阅",
+    href: "/subscription",
+    match: (path: string) =>
+      path === "/subscription" ||
+      path.startsWith("/subscription/") ||
+      path === "/profile/subscription" ||
+      path.startsWith("/profile/subscription/"),
+  };
   const isEmojiMenuActive =
-    pathname === "/emoji-recommend" ||
     pathname === "/categories" ||
-    pathname.startsWith("/categories/");
+    pathname.startsWith("/categories/") ||
+    pathname === "/showcase" ||
+    pathname.startsWith("/showcase/") ||
+    pathname === "/trending" ||
+    pathname.startsWith("/trending/");
   const isEmojiMenuOpen = emojiMenuOpenPath !== null && emojiMenuOpenPath === (pathname || "");
+  const resourceMenuItems = [
+    {
+      label: "我的表情包",
+      href: "/mine/favorites/uploads",
+      match: (path: string) =>
+        path === "/mine/favorites/uploads" || path.startsWith("/mine/favorites/uploads/"),
+    },
+    {
+      label: "我的png图片",
+      href: "/mine/works?format=png",
+      match: (path: string) => path === "/mine/works" || path.startsWith("/mine/works/"),
+    },
+  ];
+  const isResourceMenuActive = resourceMenuItems.some((item) => item.match(pathname || ""));
+  const isResourceMenuOpen =
+    resourceMenuOpenPath !== null && resourceMenuOpenPath === (pathname || "");
+  const aiToolsMenuItems = [
+    {
+      label: "视频转图片",
+      href: "/",
+      match: (path: string) => path === "/",
+    },
+    {
+      label: "视频转png",
+      href: "/create",
+      match: (path: string) => path === "/create" || path.startsWith("/create/"),
+    },
+  ];
+  const isAIToolsMenuActive = aiToolsMenuItems.some((item) => item.match(pathname || ""));
+  const isAIToolsMenuOpen =
+    aiToolsMenuOpenPath !== null && aiToolsMenuOpenPath === (pathname || "");
   const homeNav = navItems[0];
-  const rightNavItems = navItems.slice(1);
+  const rightNavItems = navItems.slice(1, -1);
+  const mineNav = navItems[navItems.length - 1];
   const emojiMenuItems = [
-    { label: "表情包推荐", href: "/emoji-recommend" },
     { label: "表情包大全", href: "/categories" },
+    { label: "表情包赏析", href: "/showcase" },
+    { label: "表情包IP", href: "/trending" },
   ];
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-slate-100 bg-white/70 backdrop-blur-xl transition-all duration-300">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
         <div className="flex items-center gap-10">
-          <Link href="/" className="flex items-center gap-3 group">
+          <Link href="/emoji-recommend" className="flex items-center gap-3 group">
             <div className="relative h-12 w-12 transition-transform duration-300 group-hover:scale-105">
               <Image 
                 src="/logo-v2.png" 
                 alt="Logo" 
                 fill 
+                sizes="48px"
                 className="object-contain scale-125"
                 priority
               />
             </div>
             <div className="flex flex-col justify-center">
-              <span className="text-2xl font-black tracking-tight text-slate-900 leading-none">元都AI</span>
+              <span className="text-2xl font-black tracking-tight text-slate-900 leading-none">元都表情包</span>
               <span className="mt-1.5 text-[11px] font-bold tracking-[0.15em] text-emerald-600 uppercase leading-none">AI 视觉资产生产平台</span>
             </div>
           </Link>
@@ -245,7 +287,7 @@ export default function Navbar() {
                   setEmojiMenuOpenPath((prev) => (prev === (pathname || "") ? null : pathname || ""))
                 }
               >
-                表情包大全
+                表情包
                 <ChevronDown
                   size={14}
                   className={`transition-transform ${isEmojiMenuOpen ? "rotate-180" : ""}`}
@@ -279,6 +321,104 @@ export default function Navbar() {
                 </div>
               ) : null}
             </div>
+            <div
+              className="relative"
+              onMouseEnter={() => setResourceMenuOpenPath(pathname || "")}
+              onMouseLeave={() => setResourceMenuOpenPath(null)}
+            >
+              <button
+                type="button"
+                className={`relative flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                  isResourceMenuActive
+                    ? "bg-emerald-50/50 text-emerald-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+                onClick={() =>
+                  setResourceMenuOpenPath((prev) => (prev === (pathname || "") ? null : pathname || ""))
+                }
+              >
+                资源管理
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${isResourceMenuOpen ? "rotate-180" : ""}`}
+                />
+                {isResourceMenuActive && (
+                  <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+                )}
+              </button>
+              {isResourceMenuOpen ? (
+                <div className="absolute left-0 top-full w-40 pt-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                    {resourceMenuItems.map((item) => {
+                      const active = item.match(pathname || "");
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setResourceMenuOpenPath(null)}
+                          className={`block rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                            active
+                              ? "bg-emerald-50 text-emerald-600"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div
+              className="relative"
+              onMouseEnter={() => setAIToolsMenuOpenPath(pathname || "")}
+              onMouseLeave={() => setAIToolsMenuOpenPath(null)}
+            >
+              <button
+                type="button"
+                className={`relative flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                  isAIToolsMenuActive
+                    ? "bg-emerald-50/50 text-emerald-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+                onClick={() =>
+                  setAIToolsMenuOpenPath((prev) => (prev === (pathname || "") ? null : pathname || ""))
+                }
+              >
+                AI工具
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${isAIToolsMenuOpen ? "rotate-180" : ""}`}
+                />
+                {isAIToolsMenuActive && (
+                  <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+                )}
+              </button>
+              {isAIToolsMenuOpen ? (
+                <div className="absolute left-0 top-full w-40 pt-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                    {aiToolsMenuItems.map((item) => {
+                      const active = item.match(pathname || "");
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setAIToolsMenuOpenPath(null)}
+                          className={`block rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                            active
+                              ? "bg-emerald-50 text-emerald-600"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
             {rightNavItems.map((item) => {
               const isActive = item.match(pathname || "");
               return (
@@ -298,6 +438,32 @@ export default function Navbar() {
                 </Link>
               );
             })}
+            <Link
+              href={mineNav.href}
+              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                mineNav.match(pathname || "")
+                  ? "bg-emerald-50/50 text-emerald-600"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              {mineNav.label}
+              {mineNav.match(pathname || "") && (
+                <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+              )}
+            </Link>
+            <Link
+              href={subscriptionNav.href}
+              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition-all duration-300 ${
+                subscriptionNav.match(pathname || "")
+                  ? "bg-emerald-50/50 text-emerald-600"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              {subscriptionNav.label}
+              {subscriptionNav.match(pathname || "") && (
+                <span className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />
+              )}
+            </Link>
           </div>
         </div>
 

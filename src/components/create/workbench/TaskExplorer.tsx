@@ -13,6 +13,7 @@ type TaskExplorerProps = {
   onSelectJob: (jobID: number) => void;
   onCreateNew: () => void;
   resolveRequestedFormats: (job: WorkbenchJobItem) => string[];
+  resolvePipelineModeLabel: (job: WorkbenchJobItem) => string;
   resolvePreviewURL: (job: WorkbenchJobItem) => string;
   formatTime: (value?: string | number) => string;
 };
@@ -60,6 +61,7 @@ export function TaskExplorer({
   onSelectJob,
   onCreateNew,
   resolveRequestedFormats,
+  resolvePipelineModeLabel,
   resolvePreviewURL,
   formatTime,
 }: TaskExplorerProps) {
@@ -137,6 +139,7 @@ export function TaskExplorer({
             const preview = (resolvePreviewURL(job) || "").trim();
             const status = (job.status || "").trim().toLowerCase();
             const formatText = (resolveRequestedFormats(job)[0] || "png").toUpperCase();
+            const modeLabel = (resolvePipelineModeLabel(job) || "").trim();
             return (
               <button
                 key={job.id}
@@ -170,6 +173,11 @@ export function TaskExplorer({
                     }`}>
                       {statusLabelMap[status] || job.status}
                     </span>
+                    {modeLabel ? (
+                      <span className="inline-flex items-center rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-sky-700">
+                        {modeLabel}
+                      </span>
+                    ) : null}
                     <span className="text-[10px] font-medium text-slate-400">{formatTime(job.updated_at || job.created_at)}</span>
                   </div>
                 </div>

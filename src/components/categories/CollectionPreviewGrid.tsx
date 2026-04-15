@@ -30,6 +30,8 @@ type CollectionPreviewGridProps = {
   loading?: boolean;
   previewCount?: number;
   motionEnabled?: boolean;
+  showDownloadMetric?: boolean;
+  onCollectionClick?: (collectionId: number) => void;
 };
 
 const DEFAULT_PREVIEW_GRID_SIZE = 15;
@@ -39,11 +41,15 @@ function CollectionCardItem({
   index,
   previewCount,
   motionEnabled,
+  showDownloadMetric,
+  onCollectionClick,
 }: {
   item: CollectionCard;
   index: number;
   previewCount: number;
   motionEnabled: boolean;
+  showDownloadMetric: boolean;
+  onCollectionClick?: (collectionId: number) => void;
 }) {
   const cardRef = useRef<HTMLAnchorElement | null>(null);
   const columns = previewCount <= 9 ? 3 : 5;
@@ -108,6 +114,7 @@ function CollectionCardItem({
     <Link
       ref={cardRef}
       href={`/collections/${item.id}`}
+      onClick={() => onCollectionClick?.(item.id)}
       className="group flex flex-col overflow-hidden rounded-[1.75rem] border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
     >
       {/* Preview Grid */}
@@ -130,7 +137,7 @@ function CollectionCardItem({
                   url={img}
                   alt={`preview-${idx}`}
                   loading={index < 3 && idx < eagerCount ? "eager" : "lazy"}
-                  preferProxy={false}
+                  preferProxy
                   className="absolute inset-0 h-full w-full object-cover"
                   fallbackClassName="h-full w-full bg-white/50"
                 />
@@ -168,7 +175,7 @@ function CollectionCardItem({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-1.5 border-t border-slate-100 pt-2">
+        <div className={`grid gap-1.5 border-t border-slate-100 pt-2 ${showDownloadMetric ? "grid-cols-3" : "grid-cols-2"}`}>
           <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
             <Heart size={11} className="text-rose-400" />
             {item.likeCount}
@@ -177,10 +184,12 @@ function CollectionCardItem({
             <Bookmark size={11} className="text-amber-400" />
             {item.favoriteCount}
           </div>
-          <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
-            <Download size={11} className="text-sky-400" />
-            {item.downloadCount}
-          </div>
+          {showDownloadMetric ? (
+            <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
+              <Download size={11} className="text-sky-400" />
+              {item.downloadCount}
+            </div>
+          ) : null}
         </div>
       </div>
     </Link>
@@ -192,6 +201,8 @@ export default function CollectionPreviewGrid({
   loading = false,
   previewCount = DEFAULT_PREVIEW_GRID_SIZE,
   motionEnabled = false,
+  showDownloadMetric = true,
+  onCollectionClick,
 }: CollectionPreviewGridProps) {
   const gridColumns = previewCount <= 9 ? 3 : 5;
   const gridRows = Math.ceil(previewCount / gridColumns);
@@ -245,6 +256,8 @@ export default function CollectionPreviewGrid({
           index={index}
           previewCount={previewCount}
           motionEnabled={motionEnabled}
+          showDownloadMetric={showDownloadMetric}
+          onCollectionClick={onCollectionClick}
         />
       ))}
     </div>
