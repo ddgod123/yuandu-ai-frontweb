@@ -10,6 +10,7 @@ import {
   fetchWithAuthRetry,
 } from "@/lib/auth-client";
 import { requestDownloadLink, triggerURLDownload } from "@/lib/download-client";
+import { isStorageObjectKey } from "@/lib/storage-prefix";
 
 type VideoJobResultEmoji = {
   id: number;
@@ -90,7 +91,7 @@ function extractObjectKey(rawUrl: string) {
 
 function buildStorageProxyCandidate(rawUrl: string) {
   const key = extractObjectKey(rawUrl);
-  if (!key || !key.startsWith("emoji/")) return "";
+  if (!isStorageObjectKey(key)) return "";
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 
@@ -559,7 +560,7 @@ export default function MineWorkDetailPage() {
 
         const proxySource = (item.file_key || item.file_url || item.thumb_url || "").trim();
         const objectKey = extractObjectKey(proxySource);
-        const proxyURL = objectKey
+        const proxyURL = isStorageObjectKey(objectKey)
           ? `${API_BASE}/storage/proxy?key=${encodeURIComponent(objectKey)}`
           : buildStorageProxyCandidate(proxySource);
 

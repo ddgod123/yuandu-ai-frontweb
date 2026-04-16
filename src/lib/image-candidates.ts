@@ -1,3 +1,4 @@
+import { isStorageObjectKey } from "@/lib/storage-prefix";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5050/api";
 
 const IMAGE_EXT_REGEX = /\.(jpe?g|png|gif|webp|svg)$/i;
@@ -38,7 +39,7 @@ function extractObjectKey(rawURL: string) {
 
 function buildStorageProxyCandidate(rawURL: string) {
   const key = extractObjectKey(rawURL);
-  if (!key || !key.startsWith("emoji/")) return "";
+  if (!isStorageObjectKey(key)) return "";
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 

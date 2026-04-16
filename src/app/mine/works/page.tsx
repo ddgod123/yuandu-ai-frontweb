@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { API_BASE, clearAuthSession, fetchWithAuthRetry } from "@/lib/auth-client";
+import { isStorageObjectKey } from "@/lib/storage-prefix";
 
 import {
   RefreshCw,
@@ -117,7 +118,7 @@ function extractObjectKey(rawUrl: string) {
 
 function buildStorageProxyCandidate(rawUrl: string) {
   const key = extractObjectKey(rawUrl);
-  if (!key || !key.startsWith("emoji/")) return "";
+  if (!isStorageObjectKey(key)) return "";
   return `${API_BASE}/storage/proxy?key=${encodeURIComponent(key)}`;
 }
 
@@ -189,7 +190,7 @@ function buildImageCandidates(rawUrl: string): string[] {
     return candidates;
   }
 
-  if (trimmed.startsWith("emoji/")) {
+  if (isStorageObjectKey(trimmed)) {
     // 纯对象 key 必须走 proxy。
     add(proxyCandidate);
     return candidates;
